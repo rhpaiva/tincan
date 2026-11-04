@@ -173,7 +173,8 @@ async function protectedPath($: $, path: string): Promise<boolean> {
 const ASK_GUARD =
   "This touches a TinCan channel, its script or the TinCan plugin. Only TinCan's own commands and tools should; allow it only if you asked for this."
 
-// What made this turn read outside content, if anything did.
+// What made this session read outside content since its last /clear or compaction, if
+// anything did: that text stays in the conversation, so it can sway every later turn.
 let tainted: string | undefined
 
 function outside(tool: string, input: Record<string, unknown>): string | undefined {
@@ -706,10 +707,17 @@ export const register: Register = (on) => {
     return { suggestions: [...below.suggestions, ...rows] }
   }).catch(($, e, next) => next(e))
 
-  on('turn.start', ($, e, next) => {
-    if (e.agentId === undefined) tainted = undefined
+  // Only a /clear or a compaction that went through takes the outside content out of the conversation.
+  on('session.end', ($, e, next) => {
+    if (e.reason === 'clear') tainted = undefined
     return next(e)
   })
+
+  on('session.compact', async ($, e, next) => {
+    const done = await next(e)
+    if (e.agentId === undefined && e.trigger !== 'precompute' && !('skip' in done && done.skip)) tainted = undefined
+    return done
+  }).catch(($, e, next) => next(e))
 
   on('tool.call', ($, e, next) => {
     tainted ??= outside(e.tool, e as unknown as Record<string, unknown>)
@@ -729,7 +737,7 @@ export const register: Register = (on) => {
     if (e.tool === 'mcp__tincan__post' && tainted) {
       return {
         decision: 'ask' as const,
-        reason: `This turn read outside content (${tainted}). A TinCan post from it needs your OK: check it isn't passing on what that content told the model to say.`,
+        reason: `This session read outside content (${tainted}) since its last /clear or compaction. A TinCan post now needs your OK: check it isn't passing on what that content told the model to say.`,
       }
     }
     return next(e)

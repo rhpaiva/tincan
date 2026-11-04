@@ -44,10 +44,15 @@ function engine(on: On, env: Record<string, string> = {}, entered = ENTERED) {
   on('tool.check', () => ({ decision: 'allow' as const }))
   on('tool.call', () => ({ result: 'done' }))
   on('turn.start', (_, e) => ({ turnId: e.turnId }) as never)
+  on('session.compact', () => ({ messages: [{ role: 'user' as const, text: 'summary', toolUses: [] }] }))
+  on('session.end', (_, e) => ({ sessionId: e.sessionId }))
   return { runs, clock }
 }
 
 const check = (tool: string, input: Record<string, unknown>) => ({ tool, input })
+
+// A conversation to compact: sample data.
+const CONVERSATION = [{ role: 'user' as const, text: 'read this page', toolUses: [] }]
 
 test('commands run for a person at the prompt or over Remote Control', async ($, on) => {
   const t = engine(on)
@@ -93,7 +98,7 @@ test("the model's file edits ask the person under .tincan and in the plugin, and
   expect((await $.tool.check(check('Read', { file_path: '/repo/.tincan/ch/messages.md' }))).decision).toBe('allow')
 })
 
-test('a post in a turn that read outside content asks the person; the next turn starts clean', async ($, on) => {
+test('after the session read outside content, every post asks the person until /clear or a compaction', async ($, on) => {
   engine(on)
   await $.command.run(typed('tincan:join', 'ch as A'))
   const post = check('mcp__tincan__post', { channel: 'ch', message: 'x' })
@@ -102,18 +107,27 @@ test('a post in a turn that read outside content asks the person; the next turn 
   const tainted = await $.tool.check(post)
   expect(tainted.decision).toBe('ask')
   expect(tainted.reason).toContain('WebFetch')
+  expect(tainted.reason).toContain('since its last /clear or compaction')
   await $.turn.start({ text: 'next', turnId: 't2' } as never)
+  expect((await $.tool.check(post)).decision).toBe('ask') // the fetched text is still in the conversation
+  await $.session.compact({ trigger: 'precompute', messages: CONVERSATION })
+  expect((await $.tool.check(post)).decision).toBe('ask') // computed ahead of time, not applied
+  await $.session.compact({ trigger: 'auto', messages: CONVERSATION })
+  expect((await $.tool.check(post)).decision).toBe('allow')
+  await $.tool.call({ tool: 'WebSearch', query: 'x' } as never)
+  expect((await $.tool.check(post)).decision).toBe('ask')
+  await $.session.end({ reason: 'clear', sessionId: 'sess-1' } as never)
   expect((await $.tool.check(post)).decision).toBe('allow')
 })
 
-test("a shell fetch and another server's tool taint the turn; TinCan's own tools don't", async ($, on) => {
+test("a shell fetch and another server's tool taint the session; TinCan's own tools don't", async ($, on) => {
   engine(on)
   const post = check('mcp__tincan__post', { channel: 'ch', message: 'x' })
   await $.tool.call({ tool: 'mcp__tincan__who', channel: 'ch' } as never)
   expect((await $.tool.check(post)).decision).toBe('allow')
   await $.tool.call({ tool: 'Bash', command: 'curl -s https://example.com' } as never)
   expect((await $.tool.check(post)).decision).toBe('ask')
-  await $.turn.start({ text: 'next', turnId: 't2' } as never)
+  await $.session.end({ reason: 'clear', sessionId: 'sess-1' } as never)
   await $.tool.call({ tool: 'mcp__example__fetch_page' } as never)
   expect((await $.tool.check(post)).decision).toBe('ask')
 })
