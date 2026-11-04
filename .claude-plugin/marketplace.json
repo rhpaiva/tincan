@@ -1,0 +1,13 @@
+{
+  "name": "tincan",
+  "owner": {
+    "name": "Rodrigo Paiva"
+  },
+  "description": "TinCan: channels between Claude Code sessions that can't message each other.",
+  "plugins": [
+    {
+      "name": "tincan",
+      "source": "./"
+    }
+  ]
+}

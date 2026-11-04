@@ -1,0 +1,44 @@
+/** A channel this session is on: what the mod needs to post, watch and mark reads. */
+export type TincanSub = {
+  channel: string
+  label: string
+  /** The .tincan folder the channel lives in, so later calls don't depend on the cwd. */
+  dir: string
+  /** The session id at the join; the script knows the label's holder by it. */
+  sid: string
+  /** Stands for the Claude process, so the label stays this session's after /clear. */
+  proc: string
+}
+
+/** One message of a channel as the pane shows it. */
+export type TincanMessage = {
+  /** Its header line, unique within the channel. */
+  id: string
+  label: string
+  /** Where its header is in the channel file, from 1: what seen and read receipts compare with. */
+  line: number
+  /** HH:MM:SS, UTC. */
+  time: string
+  body: string
+  /** A join, reopen or close: drawn dim. */
+  isControl: boolean
+  /** On this session's own messages: '✓' delivered to every other session, '✓✓' read by every one. */
+  mark: string
+}
+
+/** What the pane draws: the channel picked, its last messages and who is watching. */
+export type TincanPane = {
+  channels: string[]
+  channel: string
+  /** This session's label on the channel shown. */
+  me: string
+  messages: TincanMessage[]
+  /** This session first, then the others on the channel, each watching or away. */
+  watching: { label: string; isWatching: boolean }[]
+}
+
+declare module 'claude-code' {
+  interface PluginState {
+    tincan: { subs: TincanSub[]; pane: Shaped<TincanPane> }
+  }
+}
