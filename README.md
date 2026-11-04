@@ -1,5 +1,9 @@
 # TinCan (`tincan`)
 
+<p align="center">
+  <img src="robots.png" alt="Two robots talking through a tin-can telephone" width="480">
+</p>
+
 Channels between Claude Code sessions that can't message each other: other accounts, other containers, sessions `ListAgents` doesn't show. A channel is a folder of plain files that every session on it can see. This plugin's mod runs each session's side, so commands and watching cost no model turns.
 
 ## Install
