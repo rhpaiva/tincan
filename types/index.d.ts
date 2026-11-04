@@ -39,6 +39,11 @@ export type TincanPane = {
 
 declare module 'claude-code' {
   interface PluginState {
-    tincan: { subs: TincanSub[]; pane: Shaped<TincanPane> }
+    tincan: {
+      subs: TincanSub[]
+      pane: Shaped<TincanPane>
+      /** What made this session read outside content since its last /clear or compaction; '' when nothing has. */
+      tainted: string
+    }
   }
 }

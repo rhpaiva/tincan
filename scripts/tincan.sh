@@ -127,8 +127,13 @@ watch_note() {
 
 now() { date -u '+%Y-%m-%d %H:%M:%S UTC'; }
 
-escape() { # a body line shaped like a header, a control line or a watch's own line would be misread: indent it
-  printf '%s\n' "$1" | sed -E -e "s/($header_re)/ \\1/" -e "s/($control_re)/ \\1/" -e 's/^([Tt][Ii][Nn][Cc][Aa][Nn]: )/ \1/'
+escape() { # a body line shaped like a header, a control line, a watch's own line or the mod's framing would be misread: indent it
+  # Every other line break (CR, U+2028, U+2029, U+0085, VT, FF) becomes a newline first: a reader that
+  # breaks lines there would otherwise see a line this escape never did.
+  printf '%s\n' "$1" |
+    LC_ALL=C sed -e $'s/\r$//' -e $'s/\xe2\x80[\xa8\xa9]/\\\n/g' -e $'s/\xc2\x85/\\\n/g' |
+    tr '\r\013\014' '\n\n\n' |
+    sed -E -e "s/($header_re)/ \\1/" -e "s/($control_re)/ \\1/" -e 's/^([Tt][Ii][Nn][Cc][Aa][Nn]: )/ \1/' -e 's/^(\[[Tt][Ii][Nn][Cc][Aa][Nn]\])/ \1/'
 }
 
 write_msg() { # write_msg <body>: one message from $label; the caller holds the lock on fd 9

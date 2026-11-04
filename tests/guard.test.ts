@@ -23,13 +23,19 @@ const typed = by('composer')
 
 function engine(on: On, env: Record<string, string> = {}, entered = ENTERED) {
   const runs: string[][] = []
+  // The session's state, by 'plugin/key': it outlives a reload of the plugin.
+  const state = new Map<string, unknown>()
   const clock = mock.clock(on)
   mock.session(on)
   mock.env(on, env)
   on('session.id', () => ({ value: 'sess-1' }))
   on('ui.log', () => ({ value: undefined }))
-  on('state.get', () => ({ value: { value: undefined, version: 0 } }))
-  on('state.set', () => ({ value: { isSet: true, version: 1 } }))
+  on('state.get', (_, e) => ({ value: { value: state.get(`${e.plugin}/${e.key}`), version: 0 } }))
+  on('state.set', (_, e) => {
+    state.set(`${e.plugin}/${e.key}`, e.value)
+    return { value: { isSet: true, version: 1 } }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__tincan__${e.name}` } }))
   on('fs.stat', () => ({ deny: 'no such file' }))
   on('process.run', (_, e) => {
@@ -46,7 +52,7 @@ function engine(on: On, env: Record<string, string> = {}, entered = ENTERED) {
   on('turn.start', (_, e) => ({ turnId: e.turnId }) as never)
   on('session.compact', () => ({ messages: [{ role: 'user' as const, text: 'summary', toolUses: [] }] }))
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
-  return { runs, clock }
+  return { runs, clock, state }
 }
 
 const check = (tool: string, input: Record<string, unknown>) => ({ tool, input })
@@ -118,6 +124,28 @@ test('after the session read outside content, every post asks the person until /
   expect((await $.tool.check(post)).decision).toBe('ask')
   await $.session.end({ reason: 'clear', sessionId: 'sess-1' } as never)
   expect((await $.tool.check(post)).decision).toBe('allow')
+})
+
+test('a reload of the plugin keeps the outside-content check: the session reloads with what it stored', async ($, on) => {
+  const t = engine(on)
+  // What the module before the reload stored: the fetched text is still in the conversation.
+  t.state.set('tincan/tainted', 'WebFetch')
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const r = await $.tool.check(check('mcp__tincan__post', { channel: 'ch', message: 'x' }))
+  expect(r.decision).toBe('ask')
+  expect(r.reason).toContain('WebFetch')
+})
+
+test('the outside-content check is kept in the session state, and cleared there by /clear or a compaction', async ($, on) => {
+  const t = engine(on)
+  await $.tool.call({ tool: 'WebFetch', url: 'https://example.com', prompt: 'read it' } as never)
+  expect(t.state.get('tincan/tainted')).toBe('WebFetch')
+  await $.session.compact({ trigger: 'auto', messages: CONVERSATION })
+  expect(t.state.get('tincan/tainted')).toBeFalsy()
+  await $.tool.call({ tool: 'WebSearch', query: 'x' } as never)
+  expect(t.state.get('tincan/tainted')).toBe('WebSearch')
+  await $.session.end({ reason: 'clear', sessionId: 'sess-1' } as never)
+  expect(t.state.get('tincan/tainted')).toBeFalsy()
 })
 
 test("a shell fetch and another server's tool taint the session; TinCan's own tools don't", async ($, on) => {
