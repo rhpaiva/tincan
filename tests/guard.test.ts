@@ -21,7 +21,7 @@ const by = (kind: 'composer' | 'bridge' | 'sdk' | 'unclassified') => (command: s
 })
 const typed = by('composer')
 
-function engine(on: On, env: Record<string, string> = {}) {
+function engine(on: On, env: Record<string, string> = {}, entered = ENTERED) {
   const runs: string[][] = []
   const clock = mock.clock(on)
   mock.session(on)
@@ -34,7 +34,7 @@ function engine(on: On, env: Record<string, string> = {}) {
   on('fs.stat', () => ({ deny: 'no such file' }))
   on('process.run', (_, e) => {
     runs.push(e.argv.slice(2) as string[])
-    const stdout = e.argv[2] === 'join' ? ENTERED : '## A · 2026-11-03 22:00:05 UTC\n'
+    const stdout = e.argv[2] === 'join' ? entered : '## A · 2026-11-03 22:00:05 UTC\n'
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('process.spawn', async function* () {
@@ -116,4 +116,18 @@ test("a shell fetch and another server's tool taint the turn; TinCan's own tools
   await $.turn.start({ text: 'next', turnId: 't2' } as never)
   await $.tool.call({ tool: 'mcp__example__fetch_page' } as never)
   expect((await $.tool.check(post)).decision).toBe('ask')
+})
+
+test("the guard covers the folder of every channel this session is on, and TINCAN_DIR", async ($, on) => {
+  engine(
+    on,
+    { TINCAN_DIR: '/opt/team-lines' },
+    "TinCan: on channel 'ch' as 'A' (/srv/chan/ch/messages.md)\n--- history ---\n--- end of history (line 20) ---\n",
+  )
+  await $.command.run(typed('tincan:join', 'ch as A'))
+  expect((await $.tool.check(check('Edit', { file_path: '/srv/chan/ch/messages.md' }))).decision).toBe('ask')
+  expect((await $.tool.check(check('Bash', { command: 'cat /srv/chan/ch/labels/A/read' }))).decision).toBe('ask')
+  expect((await $.tool.check(check('Write', { file_path: '/opt/team-lines/x/messages.md' }))).decision).toBe('ask')
+  expect((await $.tool.check(check('Bash', { command: 'ls /opt/team-lines' }))).decision).toBe('ask')
+  expect((await $.tool.check(check('Edit', { file_path: '/srv/other/app.ts' }))).decision).toBe('allow')
 })

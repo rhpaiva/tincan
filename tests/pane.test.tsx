@@ -46,6 +46,9 @@ const STATE: Record<string, string> = {
   '/repo/.tincan/ch/labels/C/seen': `${OWN + 8}`,
 }
 
+// Paths the stand-in folder holds as symbolic links.
+const LINKED = new Set<string>()
+
 const WHO = "channel 'ch' is open; your last message: ## A · 2026-11-03 22:25:00 UTC\n  B: watching, read\n  C: not watching, delivered, not read\n"
 
 const PANE_PROPS = {
@@ -89,6 +92,11 @@ function engine(on: On) {
   on('ui.panes', () => ({ value: isOpen ? ([{ id: 'tincan', title: 'TinCan' }] as never) : [] }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__tincan__${e.name}` } }))
   on('fs.read', (_, e) => (e.path in STATE ? { value: STATE[e.path]! } : { deny: 'no such file' }))
+  on('fs.stat', (_, e) =>
+    e.path in STATE
+      ? { value: { kind: 'file' as const, size: 1, mtimeMs: 0, isLink: LINKED.has(e.path) } }
+      : { deny: 'no such file' },
+  )
   on('process.run', (_, e) => {
     const args = e.argv.slice(2) as string[]
     runs.push({ args, stdin: e.init?.stdin })
@@ -177,4 +185,19 @@ test('/tincan:panel with no channel closes an open pane, and the close button do
   await ui.press({ key: 'close' })
   expect(t.isOpen()).toBe(false)
   await ui.unmount()
+})
+
+test('a channel file that is a symbolic link is not read: the pane shows no messages', async ($, on) => {
+  engine(on)
+  LINKED.add('/repo/.tincan/ch/messages.md')
+  try {
+    await $.command.run(typed('tincan:join', 'ch as A'))
+    await $.command.run(typed('tincan:panel', 'ch'))
+    const ui = await $.ui.mount({ ...PANE_PROPS, surface: 'terminal' })
+    expect(await ui.find({ key: 'body-1' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^B$/ })).toBeUndefined()
+    await ui.unmount()
+  } finally {
+    LINKED.clear()
+  }
 })

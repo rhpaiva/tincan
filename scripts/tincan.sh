@@ -67,6 +67,20 @@ setup() { # setup <channel> <label> [optional]: sets dir, cdir, file, lock and t
   file="$cdir/messages.md"
   lock="$cdir/lock"
   label_paths "$label"
+  no_links "$cdir" "$file" "$lock" "$cdir/labels" "$ldir" "$state" "$readf" "$owner" "$wlock" "$winfo"
+}
+
+no_links() { # no_links <path>...: refuse a symbolic link where the channel's own files belong
+  local p
+  for p in "$@"; do
+    [ ! -L "$p" ] || die 2 "$p is a symbolic link; refusing to read or write through it (the folder may have been tampered with)"
+  done
+}
+
+put() { # put <file> <text>: replace a small state file by rename, never writing through a link
+  local tmp
+  tmp=$(mktemp "$1.XXXXXX") || die 1 "can't write $1"
+  printf '%s\n' "$2" >"$tmp" && mv -f "$tmp" "$1"
 }
 
 label_paths() { # label_paths <label>: that label's state files
@@ -166,7 +180,8 @@ enter() { # enter open|join|reopen <channel> [[as] <label>] [--rejoin] [--last N
 
   if [ "$verb" = open ]; then
     mkdir -p "$cdir" || die 1 "can't create $cdir"
-    [ -f "$dir/.gitignore" ] || echo '*' >"$dir/.gitignore"
+    no_links "$dir/.gitignore"
+  [ -f "$dir/.gitignore" ] || put "$dir/.gitignore" '*'
   else
     need_file
   fi
@@ -219,7 +234,7 @@ EOF
   elif [ "$held" != "$mine" ]; then
     write_msg "joined · session $mine" >/dev/null
   fi
-  [ -z "$proc" ] || echo "$proc" >"$owner"
+  [ -z "$proc" ] || put "$owner" "$proc"
   flock -u 9
 
   local seen
@@ -247,7 +262,7 @@ EOF
   if running_watch; then
     echo "Watch: $(watch_note)"
   else
-    echo "$seen" >"$state"
+    put "$state" "$seen"
   fi
   [ -z "$last" ] || return 0
   echo "Other sessions join with: /tincan:join $channel [as <label>]"
@@ -310,7 +325,7 @@ watch() {
     echo "TinCan: a watch on $channel as $label is $(watch_note)"
     exit 4
   fi
-  printf '%s %s %s\n' "$$" "${proc:--}" "${short:-unknown}" >"$winfo"
+  put "$winfo" "$$ ${proc:--} ${short:-unknown}"
   local seen total out missing=0
   seen=$(cat "$state" 2>/dev/null)
   [[ $seen =~ ^[0-9]+$ ]] || seen=$(wc -l <"$file")
@@ -346,7 +361,7 @@ watch() {
     fi
     status
     seen=$total
-    echo "$seen" >"$state"
+    put "$state" "$seen"
     flock -u 9
     if [ "$cstate" = closed ]; then
       if [ "$cby" = "$label" ]; then
@@ -371,7 +386,7 @@ read_up_to() { # read <channel> <label> <line>
   local had
   had=$(awk '{ print $1 }' "$readf" 2>/dev/null)
   [[ $had =~ ^[0-9]+$ ]] || had=0
-  [ "$3" -le "$had" ] || echo "$3 $(now)" >"$readf"
+  [ "$3" -le "$had" ] || put "$readf" "$3 $(now)"
 }
 
 who() { # who <channel> [<label>]
@@ -394,6 +409,10 @@ who() { # who <channel> [<label>]
   while read -r l s; do
     [ -n "$l" ] && [ "$l" != "$me" ] || continue
     label_paths "$l"
+    if [ -L "$ldir" ] || [ -L "$wlock" ] || [ -L "$state" ] || [ -L "$readf" ]; then
+      echo "  $l: skipped, its state is a symbolic link"
+      continue
+    fi
     state_="not watching"
     running_watch && state_=watching
     if [ -z "$ref" ]; then echo "  $l: $state_ (session $s)"; continue; fi

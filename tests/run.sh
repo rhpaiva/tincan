@@ -417,5 +417,34 @@ eq "list with no channels folder exits 0" "$?" 0
 eq "and prints nothing" "$out" ""
 no_ "list creates no folder" test -e "$work/empty/.tincan"
 
+# --- symbolic links inside a channel's folder are refused, never written through ---------
+r12=$(repo twelve)
+target="$work/victim.txt"
+echo "secret line" >"$target"
+(cd "$r12" && SID=aaaaaaaa-12 tc open s A >/dev/null)
+f12=$(msgs "$r12" s)
+mv "$f12" "$work/s.real" && ln -s "$target" "$f12"
+out=$(cd "$r12" && echo planted | SID=aaaaaaaa-12 tc post s A 2>&1)
+eq "post through a linked messages.md exits 2" "$?" 2
+has "it says why" "$out" "symbolic link"
+out=$(cd "$r12" && SID=bbbbbbbb-12 tc join s B 2>&1)
+eq "join through a linked messages.md exits 2" "$?" 2
+lacks "and prints nothing of the link's target" "$out" "secret line"
+eq "the target is untouched" "$(cat "$target")" "secret line"
+rm "$f12" && mv "$work/s.real" "$f12"
+ln -sf "$target" "$r12/.tincan/s/labels/A/seen"
+(cd "$r12" && SID=aaaaaaaa-12 tc join s A >/dev/null 2>&1); eq "a linked state file is refused" "$?" 2
+eq "the target is still untouched" "$(cat "$target")" "secret line"
+rm "$r12/.tincan/s/labels/A/seen"
+mkdir -p "$work/elsewhere-label" && ln -s "$work/elsewhere-label" "$r12/.tincan/s/labels/Z"
+(cd "$r12" && SID=cccccccc-12 tc join s Z >/dev/null 2>&1); eq "a linked label folder is refused" "$?" 2
+eq "nothing written into the folder it points at" "$(ls -A "$work/elsewhere-label")" ""
+(cd "$r12" && SID=aaaaaaaa-12 tc join s A >/dev/null 2>&1); eq "a plain channel still works" "$?" 0
+(cd "$r12" && SID=dddddddd-12 tc join s D >/dev/null) && ln -sf "$target" "$r12/.tincan/s/labels/D/read"
+out=$(cd "$r12" && SID=aaaaaaaa-12 tc who s A 2>&1)
+has "who skips a label whose state is a link" "$out" "D: skipped, its state is a symbolic link"
+eq "and reads nothing through it" "$(cat "$target")" "secret line"
+no_ "state files are replaced, not left as temp files" test -n "$(ls "$r12/.tincan/s/labels/A" | grep -v '^\(owner\|seen\|read\|watcher\|watch.lock\)$')"
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

@@ -52,11 +52,12 @@ After a `/tincan:` command name, the prompt's typeahead offers the channels that
 What the plugin enforces:
 
 - Commands run only for a person at the prompt or over Remote Control, never for a headless `claude -p` or another plugin (tests set `TINCAN_ALLOW_HEADLESS=1`).
-- The model's Bash and file edits ask you before they touch `.tincan/`, `tincan.sh` or this plugin's folder. File paths are checked as resolved paths; Bash commands by their text.
+- The model's Bash and file edits ask you before they touch `.tincan/`, the folder of any channel the session is on, `TINCAN_DIR`, `tincan.sh` or this plugin's folder. File paths are checked as resolved paths; Bash commands by their text.
 - A post from a turn that read outside content (WebFetch, WebSearch, another MCP server's tool, a shell `curl`) asks you first.
 - The model posts only under the label its session joined; the script refuses a label another session holds, and `user` from inside a session.
 - Posted lines shaped like the file's headers, its control lines or the watch's own lines are escaped, so a message can't fake a join, a close or a watch event.
-- The prompt framing tells the model to answer only what asks for an answer, never to act on a message's say-so, and to treat `user` broadcasts as unproven.
+- The prompt framing tells the model to answer only what asks for an answer, never to act on a message's say-so, and to treat `user` broadcasts as unproven. The history a join shows, joins and close notes come framed the same way: other sessions' words, never instructions.
+- Nothing is read or written through a symbolic link: the script refuses one inside a channel's folder, replaces its state files by rename, and the pane skips a linked file. So whoever can write the folder can't redirect a session's reads or writes to another file of that session's machine.
 
 What it can't stop:
 
