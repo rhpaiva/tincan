@@ -85,13 +85,18 @@ test("TinCan's rows draw as one dim line on every surface", async ($) => {
   }
 })
 
-test("expanded (ctrl+o), another plugin's prompt or the person's own: the row is drawn as before", async ($, on) => {
+test("TinCan's row stays one line even when the engine would draw it in full (a short row under its label, or ctrl+o)", async ($) => {
+  const ui = await $.ui.mount({ ...USER_ROW, props: { ...USER_ROW.props, isExpanded: true }, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /^🥫 / }))?.text).toBe('🥫 ops · reviewer: The migration in 4a85998 drops the `seen` column.')
+  await ui.unmount()
+})
+
+test("another plugin's prompt or the person's own: the row is drawn as before", async ($, on) => {
   on('ui.render', { component: 'UserMessage' }, ($, e) => {
     const { Text } = $.ui.resolve(e)
     return <Text>engine row</Text>
   })
   const rows = [
-    { ...USER_ROW.props, isExpanded: true },
     { ...USER_ROW.props, origin: { kind: 'plugin', name: 'other' } },
     { ...USER_ROW.props, origin: { kind: 'composer' } },
   ] as const

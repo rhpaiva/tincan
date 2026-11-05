@@ -994,11 +994,13 @@ export const register: Register = (on) => {
     )
   })
 
-  // TinCan's own rows are one dim line, as other sessions' messages are; ctrl+o shows them
-  // in full. Only the drawing changes: the model reads every row as it was written.
+  // TinCan's own rows are one dim line, always: the engine marks a short row under its speaker
+  // label expanded just as it does in ctrl+o, and no prop tells the two apart. The pane shows the
+  // messages in full. Only the drawing changes: the model reads every row as it was written.
   on('ui.render', { component: 'UserMessage', props: { origin: { kind: 'plugin' } } }, ($, e, next) => {
-    const { origin, text, isExpanded } = e.props
-    if (isExpanded || origin.kind !== 'plugin' || origin.name !== $.plugin.name) return next(e)
+    const { origin, text } = e.props
+    const ours = origin.kind === 'plugin' && (origin.name === $.plugin.name || origin.name.startsWith(`${$.plugin.name}@`))
+    if (!ours) return next(e)
     const line = compact(text)
     if (line === undefined) return next(e)
     const { Text } = $.ui.resolve(e)

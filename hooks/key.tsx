@@ -210,7 +210,7 @@ export async function drawKeyBox($: $, e: Parameters<EngineInterface['ui']['reso
         <Text>Paste it at your computer: TinCan takes a secret only there.</Text>
       )}
       {v.error ? <Text color="error">{v.error}</Text> : null}
-      <Text dimColor>Esc cancels · never paste it into the prompt</Text>
+      <Text dimColor>A paste shows for a moment before it turns into dots · Esc cancels · never paste it into the prompt</Text>
       <Button key="cancel" plain dimColor label="Cancel" onPress={() => void cancelBox($).catch(() => {})} />
     </Box>
   )
