@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { channelKeys, signBlock } from '../hooks/sign'
+import { blockAt, channelKeys, receiptMac, signBlock, verify } from '../hooks/sign'
 
 // The pane against a stand-in engine: tincan.sh and the channel file are the
 // test's own. Every value here is sample data.
@@ -37,10 +37,17 @@ const FILE = await signedFile()
 // A's own message: where its header is in FILE, which the receipts compare with.
 const OWN = FILE.split('\n').indexOf('## A · 2026-11-03 22:25:00 UTC') + 1
 // B has read past it; C's watch delivered it but C hasn't read it: '✓', not '✓✓'.
+/** A read receipt as a session holding SECRET signs it: bound to the block at its line. */
+async function receipt(label: string, line: number, at: string) {
+  const keys = await channelKeys(SECRET, 'ch')
+  const hash = blockAt(await verify(FILE, 'ch', keys), line)?.hash ?? ''
+  return `${line} ${at} UTC ${await receiptMac(keys, 'ch', label, line, at, hash)}`
+}
+
 const STATE: Record<string, string> = {
   '/repo/.tincan/ch/messages.md': FILE,
   '/repo/.tincan/ch/labels/B/seen': `${OWN + 8}`,
-  '/repo/.tincan/ch/labels/B/read': `${OWN + 8} 2026-11-03 22:31:00 UTC`,
+  '/repo/.tincan/ch/labels/B/read': await receipt('B', OWN + 8, '2026-11-03 22:31:00'),
   '/repo/.tincan/ch/labels/C/seen': `${OWN + 8}`,
 }
 
@@ -142,9 +149,23 @@ test('the pane shows the channels, each message in full, your receipts and who i
   }
 })
 
-test('once every other session has read your message it gets ✓✓', async ($, on) => {
+test("a read receipt nobody signed doesn't count", async ($, on) => {
   engine(on)
   STATE['/repo/.tincan/ch/labels/C/read'] = `${OWN + 8} 2026-11-03 22:32:00 UTC`
+  try {
+    await $.command.run(typed('tincan:join', 'ch as A'))
+    await $.command.run(typed('tincan:show', 'ch'))
+    const ui = await $.ui.mount({ ...PANE_PROPS, surface: 'terminal' })
+    expect((await ui.findAll({ type: 'Text', text: /^✓+$/ })).map((t) => t.text)).toEqual(['✓'])
+    await ui.unmount()
+  } finally {
+    delete STATE['/repo/.tincan/ch/labels/C/read']
+  }
+})
+
+test('once every other session has read your message it gets ✓✓', async ($, on) => {
+  engine(on)
+  STATE['/repo/.tincan/ch/labels/C/read'] = await receipt('C', OWN + 8, '2026-11-03 22:32:00')
   try {
     await $.command.run(typed('tincan:join', 'ch as A'))
     await $.command.run(typed('tincan:show', 'ch'))

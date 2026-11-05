@@ -156,13 +156,25 @@ export async function signBlock(file: string, channel: string, keys: Keys, label
   return { sig: `sig · prev=${prev}${by ? ` · by=${by}` : ''} · ${mac}`, size: enc(file).length, prev }
 }
 
+/** The block a read receipt for `line` stands on: the last block whose header is at or above it. */
+export const blockAt = <B extends { line: number }>(blocks: B[], line: number): B | undefined => blocks.filter((b) => b.line <= line).at(-1)
+
+/**
+ * The MAC of a read receipt: `label` read channel `channel` up to `line` at `at`, the block there
+ * hashing to `hash`. Bound to that block, so a receipt moved to another file, or kept after the
+ * file was cut back and written again, no longer verifies.
+ */
+export async function receiptMac(keys: Keys, channel: string, label: string, line: number, at: string, hash: string) {
+  return hex(await hmac(keys.post, enc(JSON.stringify(['tincan-read-v1', channel, label, line, at, hash])))).slice(0, 32)
+}
+
 /** How far block times may stray: a genuine block that doesn't fit the chain and is older than
  *  this reads as an old message put back in; so does one older than what this session already
  *  delivered by more than this (other machines' clocks may run a little behind); and one this
  *  far ahead of now is no time a sender's clock gave. */
 export const FRESH_MS = 10 * 60 * 1000
 
-export type Verdict = { action: 'deliver' | 'warn' | 'drop'; why?: 'unsigned' | 'forged' | 'copy' | 'gap' | 'clock' }
+export type Verdict = { action: 'deliver' | 'warn' | 'drop'; why?: 'unsigned' | 'forged' | 'copy' | 'gap' | 'clock' | 'misplaced' }
 
 /** What a session has delivered on a channel: the MACs, and the newest block time (ms). Kept in
  *  the session's state, which outlives a reload; none of it is secret. */
@@ -183,6 +195,9 @@ export function verdict(b: Checked, nowMs: number, seen: Delivered): Verdict {
   if (seen.macs.has(b.sig.mac)) return { action: 'drop', why: 'copy' }
   if (seen.since !== undefined && t < seen.since - FRESH_MS) return { action: 'drop', why: 'copy' }
   if (b.status === 'ok') return { action: 'deliver' }
+  // Out of place, a person's broadcast carries no authority: it may be one copied from another
+  // channel of the same name, or put back after what preceded it was removed.
+  if (b.label === 'user') return { action: 'drop', why: 'misplaced' }
   return nowMs - t > FRESH_MS ? { action: 'drop', why: 'copy' } : { action: 'warn', why: 'gap' }
 }
 

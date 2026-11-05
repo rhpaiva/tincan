@@ -11,8 +11,15 @@ export type Sorted = { deliver: Checked[]; warn: Checked[]; dropped: { block: Ch
 
 const timeOf = (b: Checked) => Date.parse(`${b.time.replace(' ', 'T')}Z`)
 
-/** A block as a model reads it: its header, with the session a broadcast came from, then its body. */
-export const shown = (b: Checked) => `${b.header}${b.by ? ` · from ${b.by}` : ''}\n\n${b.body}`
+/**
+ * A block as a model reads it: its header, with the session a broadcast came from, then its text
+ * indented under it, so no line of the text can stand where a header does.
+ */
+export const shown = (b: Checked) =>
+  `${b.header}${b.by ? ` · from ${b.by}` : ''}\n\n${b.body
+    .split('\n')
+    .map((l) => (l === '' ? '' : `  ${l}`))
+    .join('\n')}`
 
 /** True when this session wrote the block: its own post, or the person's broadcast sent from it. */
 const mine = (b: Checked, me: string) => b.label === me || (b.label === 'user' && b.by === me)
@@ -62,6 +69,7 @@ const WHY: Record<string, string> = {
   forged: "with a signature that doesn't match",
   copy: 'a copy of an earlier message',
   clock: 'with a time no clock gave',
+  misplaced: "a broadcast out of place (copied from elsewhere, or what came before it was removed)",
 }
 
 /** The person's notice for what was dropped: how many, why, and what they claimed to be. */

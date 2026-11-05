@@ -9,6 +9,8 @@ import {
   newSecret,
   parseSecret,
   signBlock,
+  blockAt,
+  receiptMac,
   verdict,
   verify,
 } from '../hooks/sign'
@@ -163,8 +165,10 @@ test('what arrives: in place is delivered; out of place and recent, delivered wi
   const at = (t: string) => Date.parse(`2026-11-05T${t}Z`)
   const none = { macs: new Set<string>() }
   expect(verdict(blocks[1]!, at('10:02:20'), none)).toEqual({ action: 'deliver' })
-  expect(verdict(blocks[2]!, at('10:05:00'), none)).toEqual({ action: 'warn', why: 'gap' })
-  expect(verdict(blocks[2]!, at('10:30:00'), none)).toEqual({ action: 'drop', why: 'copy' })
+  // The copy is a 'user' block: out of place, a broadcast carries no authority.
+  expect(verdict(blocks[2]!, at('10:05:00'), none)).toEqual({ action: 'drop', why: 'misplaced' })
+  expect(verdict({ ...blocks[2]!, label: 'reviewer' }, at('10:05:00'), none)).toEqual({ action: 'warn', why: 'gap' })
+  expect(verdict({ ...blocks[2]!, label: 'reviewer' }, at('10:30:00'), none)).toEqual({ action: 'drop', why: 'copy' })
   expect(verdict(blocks[2]!, at('10:05:00'), { macs: new Set([blocks[1]!.sig!.mac]) })).toEqual({ action: 'drop', why: 'copy' })
   expect(verdict(blocks[3]!, at('10:05:00'), none)).toEqual({ action: 'drop', why: 'unsigned' })
   const forged = await verify(f.replace('Freeze', 'Thaw'), 'ops', await channelKeys(SECRET, 'ops'))
@@ -192,4 +196,21 @@ test('blocks are found by their header lines; the rules before the first are not
   const f = `${PREAMBLE}${written('builder', '2026-11-05 10:00:02', 'joined · session 3f9a1c22')}`
   expect(blocksOf(f).map((b) => [b.label, b.line])).toEqual([['builder', 6]])
   expect(blocksOf(PREAMBLE)).toEqual([])
+})
+
+test('a read receipt verifies against the block it stands on, and only that one', async () => {
+  let f = await post(PREAMBLE, 'builder', '2026-11-05 10:00:02', 'joined · session 3f9a1c22')
+  f = await post(f, 'builder', '2026-11-05 10:01:00', 'the schema is final')
+  const keys = await channelKeys(SECRET, 'ops')
+  const blocks = await verify(f, 'ops', keys)
+  const line = f.split('\n').length - 1
+  const at = '2026-11-05 10:02:00'
+  const mac = await receiptMac(keys, 'ops', 'reviewer', line, at, blockAt(blocks, line)!.hash)
+  expect(mac).toMatch(/^[0-9a-f]{32}$/)
+  expect(await receiptMac(keys, 'ops', 'reviewer', line, at, blockAt(blocks, line)!.hash)).toBe(mac)
+  // Another reader, another line, or the block there changed: no longer the same receipt.
+  expect(await receiptMac(keys, 'ops', 'docs', line, at, blockAt(blocks, line)!.hash)).not.toBe(mac)
+  const changed = await verify(f.replace('final', 'draft'), 'ops', keys)
+  expect(await receiptMac(keys, 'ops', 'reviewer', line, at, blockAt(changed, line)!.hash)).not.toBe(mac)
+  expect(blockAt(blocks, 1)).toBeUndefined()
 })

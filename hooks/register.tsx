@@ -8,7 +8,7 @@ import type { Pending } from './key'
 import { dropNotice, gapWarning, onlyJoins as joinsOnly, seenIn, shown, sortArrivals } from './channel'
 import type { Seen } from './channel'
 import { closeNote, compact, frame, historyOf, joinsNote } from './rows'
-import { channelKeys, signBlock, verify } from './sign'
+import { ZERO, blockAt, channelKeys, hashOf, receiptMac, signBlock, verdict, verify } from './sign'
 import type { Checked } from './sign'
 
 // TinCan. scripts/tincan.sh is the protocol (the channel files, their
@@ -86,7 +86,7 @@ type Write = {
  * file's last block, and the script writes it unless the file changed size meanwhile (exit 7),
  * when the mod reads it again and signs again.
  */
-async function signedRun($: $, w: Write): Promise<Run> {
+async function signedRun($: $, w: Write): Promise<Run & { block?: { text: string; time: string } }> {
   const secret = currentSecret()
   if (!secret) return { exitCode: 2, stdout: '', stderr: 'TinCan: this session has no secret yet: /tincan:key' }
   const keys = await channelKeys(secret, w.channel)
@@ -97,6 +97,7 @@ async function signedRun($: $, w: Write): Promise<Run> {
     const at = await nowAt($)
     const { sig, size } = await signBlock(text, w.channel, keys, w.label, at, body.stdout, w.by)
     const r = await run($, [w.verb, ...w.args, '--at', at, '--sig', sig, ...(w.file ? ['--size', String(size)] : [])], w.env, w.stdin)
+    if (r.exitCode === 0) return { ...r, block: { text: `## ${w.label} · ${at} UTC\n\n${body.stdout}\n\n${sig}\n`, time: at } }
     if (r.exitCode !== 7) return r
   }
   return {
@@ -135,6 +136,57 @@ async function checkedFile($: $, s: { dir: string; channel: string }): Promise<C
   const secret = currentSecret()
   if (!secret) return undefined
   return verify(await readPlain($, fileOf(s)), s.channel, await channelKeys(secret, s.channel))
+}
+
+// The blocks this session wrote, per channel, so it can tell the person when one disappears from
+// the file: the deletion a signature can't show, since nothing after it may be signed yet.
+const written = new Map<string, { hash: string; time: string }[]>()
+
+async function remember(channel: string, block: { text: string; time: string } | undefined) {
+  if (!block) return
+  const list = written.get(channel) ?? []
+  list.push({ hash: await hashOf(block.text), time: block.time })
+  written.set(channel, list.slice(-50))
+}
+
+/** Tells the person about each block this session wrote that is no longer in the channel file. */
+async function checkWritten($: $, s: TincanSub, blocks: Checked[]) {
+  const list = written.get(s.channel)
+  if (!list?.length) return
+  const present = new Set(blocks.map((b) => b.hash))
+  const gone = list.filter((x) => !present.has(x.hash))
+  if (gone.length === 0) return
+  written.set(s.channel, list.filter((x) => present.has(x.hash)))
+  for (const g of gone) {
+    await tell(
+      $,
+      `TinCan ${s.channel}: your message from ${g.time} UTC is no longer in the channel file: something removed or changed it, and other sessions may never have read it.`,
+    )
+  }
+}
+
+/** A read receipt, signed and bound to the block at `line`; unsigned (and so not counted) without a secret. */
+async function readReceipt($: $, s: TincanSub, line: number): Promise<Run> {
+  const secret = currentSecret()
+  if (!secret) return run($, ['read', s.channel, s.label, String(line)], envOf(s))
+  const keys = await channelKeys(secret, s.channel)
+  const blocks = await verify(await readPlain($, fileOf(s)), s.channel, keys)
+  const at = await nowAt($)
+  const mac = await receiptMac(keys, s.channel, s.label, line, at, blockAt(blocks, line)?.hash ?? ZERO)
+  return run($, ['read', s.channel, s.label, String(line), '--at', at, '--sig', mac], envOf(s))
+}
+
+/** The line `label` has read up to on the channel, counted only when its receipt verifies; else 0. */
+async function verifiedRead($: $, s: TincanSub, label: string, blocks: Checked[]): Promise<number> {
+  const secret = currentSecret()
+  if (!secret) return 0
+  const m = /^(\d+) (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) UTC ([0-9a-f]{32})$/.exec(
+    (await readPlain($, `${s.dir}/${s.channel}/labels/${label}/read`)).trim(),
+  )
+  if (!m) return 0
+  const line = Number(m[1])
+  const keys = await channelKeys(secret, s.channel)
+  return m[3] === (await receiptMac(keys, s.channel, label, line, m[2] ?? '', blockAt(blocks, line)?.hash ?? ZERO)) ? line : 0
 }
 
 /** Per channel, how its watch catches up on what waited for the secret. */
@@ -358,7 +410,7 @@ async function refreshPane($: $) {
   // Only what TinCan could verify; the count of the rest is shown, never their text.
   const blocks = await checkedFile($, s)
   const messages: TincanMessage[] = (blocks ?? [])
-    .filter((b) => b.status === 'ok' || b.status === 'out-of-chain')
+    .filter((b) => b.status === 'ok')
     .map((b) => ({
       id: b.header,
       line: b.line,
@@ -370,12 +422,12 @@ async function refreshPane($: $) {
       mark: '',
     }))
     .slice(-PANE_KEEP)
-  const hidden = (blocks ?? []).filter((b) => b.status === 'unsigned' || b.status === 'forged').length
+  const hidden = (blocks ?? []).filter((b) => b.status !== 'ok').length
   const others = othersOf(await who($, channel))
   const reach = await Promise.all(
     others.map(async (o) => ({
       seen: await lineIn($, `${folder}/labels/${o.label}/seen`),
-      read: await lineIn($, `${folder}/labels/${o.label}/read`),
+      read: await verifiedRead($, s, o.label, blocks ?? []),
     })),
   )
   // ✓ once every other session's watch has delivered your message, ✓✓ once every one has read it.
@@ -469,6 +521,7 @@ function watch($: $, s: TincanSub) {
   let stopped = false
   watches.set(s.channel, () => {
     stopped = true
+    looking.cancel()
     catchUps.delete(s.channel)
     void stream.return(undefined as never)
   })
@@ -501,7 +554,7 @@ function watch($: $, s: TincanSub) {
     warnings = []
     try {
       await $.prompt.submit({ text: frame(s, text, warned) }) // resolves as the turn starts
-      await run($, ['read', s.channel, s.label, String(line)], envOf(s))
+      await readReceipt($, s, line)
     } finally {
       inFlight = false
       kick()
@@ -514,7 +567,10 @@ function watch($: $, s: TincanSub) {
   let from = 0 // the line this watch has handled up to
   let reported = 0 // the last line the script reported
   let toldLocked = false
+  let readTo: string | undefined // the hash of the last block this watch handled
+  let broken = false
   const handle = async (to: number) => {
+    if (broken) return
     reported = Math.max(reported, to)
     const blocks = await checkedFile($, s)
     if (!blocks) {
@@ -525,9 +581,21 @@ function watch($: $, s: TincanSub) {
       return
     }
     toldLocked = false
+    await checkWritten($, s, blocks)
+    // The file is append-only: when what this watch already handled reads differently, the file
+    // was cut back or rewritten (another channel's file copied over it, say). Stop delivering.
+    if (readTo !== undefined && blockAt(blocks, from)?.hash !== readTo) {
+      broken = true
+      await tell(
+        $,
+        `TinCan ${s.channel}: the channel file was rewritten under this session's watch, so nothing more from it reaches the model. Something wrote the folder directly; /tincan:join ${s.channel} --rejoin reads it afresh.`,
+      )
+      return
+    }
     const seen = await seenOf($, s.channel)
     const got = sortArrivals(blocks, from, reported, s.label, await $.clock.now(), seen)
     from = reported
+    readTo = blockAt(blocks, from)?.hash
     await keepSeen($, s.channel, seen)
     if (got.dropped.length > 0) await tell($, dropNotice(s.channel, got.dropped))
     for (const b of got.warn) await tell($, `TinCan ${s.channel}: ${gapWarning(b)}`)
@@ -543,10 +611,17 @@ function watch($: $, s: TincanSub) {
       pokePane($)
     } else if (!inFlight && pending.length === 0) {
       // Nothing for the model (its own blocks, or only dropped ones), but it has all been seen.
-      void run($, ['read', s.channel, s.label, String(from)], envOf(s))
+      void readReceipt($, s, from).catch(() => {})
     }
   }
   catchUps.set(s.channel, () => void handle(reported).catch(() => {}))
+  // A deletion of this session's newest message changes nothing a watch reports: look for it.
+  const looking = $.clock.every(10000, () => {
+    void (async () => {
+      const blocks = await checkedFile($, s)
+      if (blocks) await checkWritten($, s, blocks)
+    })().catch(() => {})
+  })
 
   void (async () => {
     let buf = ''
@@ -576,7 +651,8 @@ function watch($: $, s: TincanSub) {
               // The close the script stopped on, as the file has it: only a genuine one reaches the model.
               const blocks = await checkedFile($, s)
               const c = blocks?.filter((b) => b.label === who && /^closed · /.test(b.body)).at(-1)
-              if (c && (c.status === 'ok' || c.status === 'out-of-chain')) {
+              const fresh = c ? verdict(c, await $.clock.now(), await seenOf($, s.channel)).action !== 'drop' : false
+              if (c && fresh) {
                 await tell($, `TinCan: ${who} closed channel '${s.channel}'. Its last message:\n\n${c.body}`)
                 await note($, closeNote(who, s.channel, shown(c)))
                 $.ui.toast(`TinCan: ${who} closed '${s.channel}'`)
@@ -605,6 +681,8 @@ function watch($: $, s: TincanSub) {
       $.ui.log(`TinCan ${s.channel}: watch failed: ${String(err)}`, { to: 'debug' })
     }
     const end = await stream.result.catch(() => undefined)
+    looking.cancel()
+    catchUps.delete(s.channel)
     if (stopped) return
     watches.delete(s.channel)
     subs.delete(s.channel)
@@ -720,6 +798,7 @@ async function send($: $, args: string): Promise<Answer> {
   const by = s?.label ?? (await $.session.id()).slice(0, 8)
   const r = await signedRun($, { verb: 'post', channel, label: 'user', args: [channel, 'user'], env, stdin: message, body: ['post'], by, file })
   if (r.exitCode !== 0) return { text: clean(r.stderr || r.stdout) }
+  await remember(channel, r.block)
   return { text: `Sent to '${channel}' as user.` }
 }
 
@@ -728,7 +807,20 @@ async function who($: $, channel: string): Promise<string> {
   const r = s
     ? await run($, ['who', channel, s.label], envOf(s))
     : await run($, ['who', channel], { CLAUDE_CODE_SESSION_ID: '' })
-  return clean(r.exitCode === 0 ? r.stdout : r.stderr || r.stdout)
+  const text = clean(r.exitCode === 0 ? r.stdout : r.stderr || r.stdout)
+  const blocks = s && r.exitCode === 0 ? await checkedFile($, s) : undefined
+  if (!s || !blocks) return text
+  // The script reads receipts from the files as they are; a 'read' counts only when its receipt verifies.
+  const mine = blocks.filter((b) => b.label === s.label && !/^(joined|reopened|closed) · /.test(b.body)).at(-1)
+  const ref = mine?.line ?? blocks.at(-1)?.line ?? 0
+  const lines = await Promise.all(
+    text.split('\n').map(async (l) => {
+      const m = /^(\s*)([A-Za-z0-9][A-Za-z0-9._-]*): (.*), read$/.exec(l)
+      if (!m || (await verifiedRead($, s, m[2] ?? '', blocks)) >= ref) return l
+      return `${m[1]}${m[2]}: ${m[3]}, delivered; its read receipt isn't signed`
+    }),
+  )
+  return lines.join('\n')
 }
 
 async function leave($: $, args: string): Promise<Answer> {
@@ -978,6 +1070,7 @@ export const register: Register = (on) => {
       file: fileOf(s),
     })
     if (r.exitCode !== 0) return { deny: clean(r.stderr || r.stdout) }
+    await remember(channel, r.block)
     pokePane($)
     return { result: `Posted to '${channel}' as '${s.label}' (${clean(r.stdout)}). Check who has read it with mcp__tincan__who.` }
   }).catch(() => ({ deny: 'TinCan: posting failed.' }))

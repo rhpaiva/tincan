@@ -51,6 +51,8 @@ short=${sid:0:8}
 proc=""
 [ -n "${CLAUDE_PID:-}" ] && proc="$(uname -n)/$CLAUDE_PID"
 header_re='^## [A-Za-z0-9][A-Za-z0-9._-]* · [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} UTC$'
+# The header a session's model reads for a person's broadcast, with the session it came from.
+header_from_re='^## [A-Za-z0-9][A-Za-z0-9._-]* · [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} UTC · from [A-Za-z0-9][A-Za-z0-9._-]*$'
 # First lines of the script's own messages. A post's lines that start the same
 # way are indented, so only the script writes these.
 control_re='^(joined|reopened|closed) · '
@@ -190,7 +192,7 @@ escape() { # a body line shaped like a header, a control line, a watch's own lin
   printf '%s\n' "$1" |
     LC_ALL=C sed -e $'s/\r$//' -e $'s/\xe2\x80[\xa8\xa9]/\\\n/g' -e $'s/\xc2\x85/\\\n/g' |
     tr '\r\013\014' '\n\n\n' |
-    sed -E -e "s/($header_re)/ \\1/" -e "s/($control_re)/ \\1/" -e 's/^([Tt][Ii][Nn][Cc][Aa][Nn]: )/ \1/' -e 's/^(\[[Tt][Ii][Nn][Cc][Aa][Nn]\])/ \1/' -e 's/^(sig · )/ \1/'
+    sed -E -e "s/($header_re)/ \\1/" -e "s/($header_from_re)/ \\1/" -e "s/($control_re)/ \\1/" -e 's/^([Tt][Ii][Nn][Cc][Aa][Nn]: )/ \1/' -e 's/^(\[[Tt][Ii][Nn][Cc][Aa][Nn]\])/ \1/' -e 's/^(sig · )/ \1/'
 }
 
 write_msg() { # write_msg <body>: one message from $label, signed when at and sig are set; the caller holds the lock on fd 9
