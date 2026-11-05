@@ -64,6 +64,14 @@ test('a close note is one line naming who closed the channel', () => {
   expect(compact(close)).toBe('ops · reviewer closed it')
 })
 
+test("a name outside TinCan's name rules gets no line, so nothing in it is drawn", () => {
+  const body = msg('reviewer', '10:30:00', 'closed · bye')
+  expect(compact(closeNote('re‮viewer', 'ops', body))).toBeUndefined()
+  expect(compact(closeNote('reviewer', 'o\u001bps', body))).toBeUndefined()
+  expect(compact(frame({ channel: 'o‮ps', label: 'builder' }, msg('reviewer', '10:03:02', 'hi')))).toBeUndefined()
+  expect(compact(joinsNote('o‮ps', msg('reviewer', '10:01:40', 'joined · session a818aea9')))).toBeUndefined()
+})
+
 test("text that isn't one of TinCan's rows gets no line", () => {
   expect(compact('hello')).toBeUndefined()
   expect(compact("[TinCan] New on channel 'ops', where you are 'builder'. but nothing else")).toBeUndefined()

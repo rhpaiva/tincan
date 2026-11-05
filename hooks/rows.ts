@@ -4,6 +4,9 @@
 
 type Where = { channel: string; label: string }
 
+// A channel or label name, as the script allows them: a row with any other name gets no line.
+const NAME = '[A-Za-z0-9][A-Za-z0-9._-]{0,63}'
+
 /** A message's header line in the channel file: its label and time. */
 export const MESSAGE = /^## ([A-Za-z0-9][A-Za-z0-9._-]*) · \d{4}-\d{2}-\d{2} (\d{2}:\d{2}:\d{2}) UTC$/
 
@@ -61,7 +64,7 @@ export function compact(text: string): string | undefined {
   const lines = text.split('\n')
   const first = lines[0] ?? ''
 
-  const delivery = /^\[TinCan\] New on channel '([^']+)', where you are '[^']+'\. /.exec(first)
+  const delivery = new RegExp(`^\\[TinCan\\] New on channel '(${NAME})', where you are '${NAME}'\\. `).exec(first)
   if (delivery) {
     const at = lines.indexOf(CHANNEL_BELOW)
     if (at < 0) return undefined
@@ -73,7 +76,7 @@ export function compact(text: string): string | undefined {
     return `🥫 ${channel} · ${messages.length} messages: ${senders}`
   }
 
-  const joins = /^\[TinCan\] On channel '([^']+)', nothing to answer /.exec(first)
+  const joins = new RegExp(`^\\[TinCan\\] On channel '(${NAME})', nothing to answer `).exec(first)
   if (joins) {
     const messages = messagesIn(lines.slice(1))
     const said = (m: { body: string[] }, verb: string) => m.body.some((l) => l.startsWith(`${verb} · `))
@@ -86,7 +89,7 @@ export function compact(text: string): string | undefined {
     return parts.length > 0 ? `${joins[1]} · ${parts.join(' · ')}` : undefined
   }
 
-  const close = /^\[TinCan\] (\S+) closed channel '([^']+)', and this session's watch on it has ended\./.exec(first)
+  const close = new RegExp(`^\\[TinCan\\] (${NAME}) closed channel '(${NAME})', and this session's watch on it has ended\\.`).exec(first)
   if (close) return `${close[2]} · ${close[1]} closed it`
 
   return undefined

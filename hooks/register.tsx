@@ -434,7 +434,7 @@ function watch($: $, s: TincanSub) {
             const text = batch.join('\n').trim()
             batch = []
             if (!line.startsWith('TinCan: you closed')) {
-              const who = /^TinCan: (\S+) closed channel/.exec(line)?.[1] ?? 'another session'
+              const who = /^TinCan: ([A-Za-z0-9][A-Za-z0-9._-]*) closed channel/.exec(line)?.[1] ?? 'another session'
               await tell($, `TinCan: ${who} closed channel '${s.channel}'. Its last message:\n\n${text}`)
               await note($, closeNote(who, s.channel, text))
               $.ui.toast(`TinCan: ${who} closed '${s.channel}'`)
