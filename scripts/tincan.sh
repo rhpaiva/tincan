@@ -12,6 +12,17 @@
 #   tincan.sh read   <channel> <label> <line>         record that the label has read up to <line>
 #   tincan.sh who    <channel> [<label>]              who has seen your last message
 #   tincan.sh list                                    each channel in the folder: "<name> open|closed"
+#   tincan.sh body   post|close|join|reopen [<label>] < text   the body a write would hold, as written
+#   tincan.sh where  <channel>                        the channel file's path
+#
+# Signed writes. The mod signs each block before the script writes it: it asks
+# `body` for the exact body, signs it, and passes, to open, join, reopen, post or
+# close, --at '<YYYY-MM-DD HH:MM:SS>' (the header's time, within 2 minutes of
+# now), --sig '<signature line>' (appended after the body) and --size <bytes>
+# (the file's size when it signed; a write to a file of another size exits 7, and
+# the mod signs again). read takes --at and --sig '<32 hex>' for a signed receipt.
+# The script checks their shape, not the signatures: it has no key. Sessions
+# drop every block they can't verify.
 #
 # The folder is $TINCAN_DIR, else .tincan/ at the main checkout of the current
 # git repository (shared by all its worktrees), else ./.tincan. Each channel is
@@ -29,7 +40,8 @@
 #
 # Exit codes: 1 no such channel, 2 bad arguments, 3 label held by another
 # session (or not yours), 4 a watch for this label is already running, 5 the
-# channel is closed, 6 the channel already exists (open) or is open (reopen).
+# channel is closed, 6 the channel already exists (open) or is open (reopen),
+# 7 the channel changed since a signed write was signed.
 set -u
 
 script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
@@ -42,10 +54,55 @@ header_re='^## [A-Za-z0-9][A-Za-z0-9._-]* · [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}
 # First lines of the script's own messages. A post's lines that start the same
 # way are indented, so only the script writes these.
 control_re='^(joined|reopened|closed) · '
+# A block's signature line; a body line shaped like one is indented.
+sig_re='^sig · prev=[0-9a-f]{16}( · by=[A-Za-z0-9][A-Za-z0-9._-]{0,63})? · [0-9a-f]{32}$'
 
 die() { echo "TinCan: $2" >&2; exit "$1"; }
 command -v flock >/dev/null || die 2 "needs flock (util-linux); on macOS: brew install flock"
 name_ok() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; }
+
+# The options of a signed write, taken out of the arguments: at, sig, size; the rest stay in args.
+at="" sig="" size=""
+take_signed() { # take_signed <args...>: sets at, sig, size and args
+  args=()
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --at) at=${2:-}; shift ;;
+      --sig) sig=${2:-}; shift ;;
+      --size) size=${2:-}; shift ;;
+      *) args+=("$1") ;;
+    esac
+    shift
+  done
+}
+
+epoch_of() { date -u -d "$1" +%s 2>/dev/null || date -j -u -f '%Y-%m-%d %H:%M:%S' "$1" +%s 2>/dev/null; }
+
+check_at() { # check_at: $at is a header time within 2 minutes of now
+  [[ $at =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2}$ ]] || die 2 "--at takes 'YYYY-MM-DD HH:MM:SS' (got '$at')"
+  local t n
+  t=$(epoch_of "$at") || die 2 "--at is no time ('$at')"
+  n=$(date -u +%s)
+  [ $((t > n ? t - n : n - t)) -le 120 ] || die 2 "--at is more than 2 minutes from now ($at UTC)"
+}
+
+check_signed() { # check_signed: the shape of at, sig and size, for the label being written
+  [ -n "$at$sig$size" ] || return 0
+  [ -n "$at" ] && [ -n "$sig" ] || die 2 "a signed write takes both --at and --sig"
+  check_at
+  [[ $sig =~ $sig_re ]] || die 2 "--sig is not a signature line"
+  if [ "$label" = user ]; then
+    [[ $sig == *" · by="* ]] || die 2 "a person's broadcast is signed with the session it came from (by=)"
+  else
+    [[ $sig != *" · by="* ]] || die 2 "only a person's broadcast names the session it came from"
+  fi
+  [ -z "$size" ] || [[ $size =~ ^[0-9]+$ ]] || die 2 "--size takes a number of bytes (got '$size')"
+}
+
+check_size() { # check_size: under the lock, the file is still the size the write was signed against
+  [ -z "$size" ] || [ "$(($(wc -c <"$file")))" = "$size" ] ||
+    die 7 "channel '$channel' changed since this write was signed; read it again and sign again"
+}
 
 folder() {
   if [ -n "${TINCAN_DIR:-}" ]; then echo "$TINCAN_DIR"; return; fi
@@ -133,14 +190,50 @@ escape() { # a body line shaped like a header, a control line, a watch's own lin
   printf '%s\n' "$1" |
     LC_ALL=C sed -e $'s/\r$//' -e $'s/\xe2\x80[\xa8\xa9]/\\\n/g' -e $'s/\xc2\x85/\\\n/g' |
     tr '\r\013\014' '\n\n\n' |
-    sed -E -e "s/($header_re)/ \\1/" -e "s/($control_re)/ \\1/" -e 's/^([Tt][Ii][Nn][Cc][Aa][Nn]: )/ \1/' -e 's/^(\[[Tt][Ii][Nn][Cc][Aa][Nn]\])/ \1/'
+    sed -E -e "s/($header_re)/ \\1/" -e "s/($control_re)/ \\1/" -e 's/^([Tt][Ii][Nn][Cc][Aa][Nn]: )/ \1/' -e 's/^(\[[Tt][Ii][Nn][Cc][Aa][Nn]\])/ \1/' -e 's/^(sig · )/ \1/'
 }
 
-write_msg() { # write_msg <body>: one message from $label; the caller holds the lock on fd 9
+write_msg() { # write_msg <body>: one message from $label, signed when at and sig are set; the caller holds the lock on fd 9
   local ts
-  ts=$(now)
-  printf '\n## %s · %s\n\n%s\n' "$label" "$ts" "$1" >>"$file"
+  if [ -n "$at" ]; then ts="$at UTC"; else ts=$(now); fi
+  if [ -n "$sig" ]; then
+    printf '\n## %s · %s\n\n%s\n\n%s\n' "$label" "$ts" "$1" "$sig" >>"$file"
+  else
+    printf '\n## %s · %s\n\n%s\n' "$label" "$ts" "$1" >>"$file"
+  fi
   echo "## $label · $ts"
+}
+
+# The bodies the script writes, one place each, so `body` prints what a write will hold.
+post_body() { # post_body: the message on stdin, escaped
+  local body
+  body=$(cat)
+  [ -n "${body//[[:space:]]/}" ] || die 2 "empty message; pass the body on stdin"
+  escape "$body"
+}
+
+close_body() { # close_body <note>: the close line for $label, and the escaped note when there is one
+  local body="closed · $label closed this channel, and your watch ends with this message. Tell your user it closed; post nothing more and start no new watch."
+  [ -z "${1//[[:space:]]/}" ] || body+=$'\n\n'"$(escape "$1")"
+  printf '%s' "$body"
+}
+
+enter_body() { # enter_body join|reopen: the line a join or reopen writes for this session
+  if [ "$1" = reopen ]; then printf 'reopened · session %s' "${short:-unknown}"; else printf 'joined · session %s' "${short:-unknown}"; fi
+}
+
+body_of() { # body post|close|join|reopen [<label>]
+  local b note=""
+  case ${1:-} in
+    post) b=$(post_body) || exit $?; printf '%s' "$b" ;;
+    close)
+      label=${2:-}
+      name_ok "$label" || die 2 "usage: tincan.sh body close <label> < note"
+      [ -t 0 ] || note=$(cat)
+      close_body "$note" ;;
+    join | reopen) enter_body "$1" ;;
+    *) die 2 "usage: tincan.sh body post|close|join|reopen [<label>]" ;;
+  esac
 }
 
 holders() { # "<label> <short session id>" for each label joined since the last close
@@ -173,6 +266,9 @@ enter() { # enter open|join|reopen <channel> [[as] <label>] [--rejoin] [--last N
     case $1 in
       --rejoin) rejoin=1 ;;
       --last) last=${2:-}; shift ;;
+      --at) at=${2:-}; shift ;;
+      --sig) sig=${2:-}; shift ;;
+      --size) size=${2:-}; shift ;;
       *) args+=("$1") ;;
     esac
     shift
@@ -182,6 +278,8 @@ enter() { # enter open|join|reopen <channel> [[as] <label>] [--rejoin] [--last N
   [ "${args[1]:-}" = as ] && args=("${args[0]}" "${args[@]:2}")
   setup "${args[0]}" "${args[1]:-}"
   [ "$label" != user ] || die 2 "the label 'user' is reserved for a person's broadcast; pick another"
+  check_signed
+  [ "$verb" != open ] || [ -z "$size" ] || die 2 "open writes a new file: it takes no --size"
 
   if [ "$verb" = open ]; then
     mkdir -p "$cdir" || die 1 "can't create $cdir"
@@ -235,9 +333,11 @@ EOF
   fi
   mkdir -p "$ldir"
   if [ "$verb" = reopen ]; then
-    write_msg "reopened · session $mine" >/dev/null
+    check_size
+    write_msg "$(enter_body reopen)" >/dev/null
   elif [ "$held" != "$mine" ]; then
-    write_msg "joined · session $mine" >/dev/null
+    check_size
+    write_msg "$(enter_body join)" >/dev/null
   fi
   [ -z "$proc" ] || put "$owner" "$proc"
   flock -u 9
@@ -286,35 +386,40 @@ EOF
 }
 
 post() {
-  [ $# -ge 1 ] || die 2 "usage: tincan.sh post <channel> [<label>] < body"
+  take_signed "$@"
+  set -- "${args[@]}"
+  [ $# -ge 1 ] || die 2 "usage: tincan.sh post <channel> [<label>] [--at T --sig S --size N] < body"
   setup "$1" "${2:-}"
+  check_signed
   need_file
   local body
-  body=$(cat)
-  [ -n "${body//[[:space:]]/}" ] || die 2 "empty message; pass the body on stdin"
-  body=$(escape "$body")
+  body=$(post_body) || exit $?
   exec 9>>"$lock"
   flock 9
   status
   [ "$cstate" = open ] || die 5 "$(closed_note), so nothing more can be posted. Tell the user; only they decide whether to reopen it."
   owns_label
+  check_size
   write_msg "$body"
 }
 
 close() {
-  [ $# -ge 1 ] || die 2 "usage: tincan.sh close <channel> [<label>] < note"
+  take_signed "$@"
+  set -- "${args[@]}"
+  [ $# -ge 1 ] || die 2 "usage: tincan.sh close <channel> [<label>] [--at T --sig S --size N] < note"
   setup "$1" "${2:-}"
+  check_signed
   need_file
   local note="" body
   [ -t 0 ] || note=$(cat)
-  body="closed · $label closed this channel, and your watch ends with this message. Tell your user it closed; post nothing more and start no new watch."
-  [ -z "${note//[[:space:]]/}" ] || body+=$'\n\n'"$(escape "$note")"
+  body=$(close_body "$note")
   exec 9>>"$lock"
   flock 9
   status
   [ "$cstate" = open ] || die 5 "$(closed_note) already"
   [ "$label" != user ] || die 3 "a channel is closed by a session that joined it, not by 'user'"
   owns_label
+  check_size
   write_msg "$body"
 }
 
@@ -382,16 +487,32 @@ watch() {
   done
 }
 
-read_up_to() { # read <channel> <label> <line>
-  [ $# -ge 3 ] || die 2 "usage: tincan.sh read <channel> <label> <line>"
+read_up_to() { # read <channel> <label> <line> [--at T --sig <32 hex>]
+  take_signed "$@"
+  set -- "${args[@]}"
+  [ $# -ge 3 ] || die 2 "usage: tincan.sh read <channel> <label> <line> [--at T --sig MAC]"
   setup "$1" "$2"
   [[ $3 =~ ^[0-9]+$ ]] || die 2 "the line is a number (got '$3')"
+  local stamp had
+  stamp=$(now)
+  if [ -n "$at$sig" ]; then
+    [ -n "$at" ] && [ -n "$sig" ] || die 2 "a signed receipt takes both --at and --sig"
+    [[ $sig =~ ^[0-9a-f]{32}$ ]] || die 2 "a receipt's --sig is 32 hex digits"
+    check_at
+    stamp="$at UTC $sig"
+  fi
   need_file
   mkdir -p "$ldir"
-  local had
   had=$(awk '{ print $1 }' "$readf" 2>/dev/null)
   [[ $had =~ ^[0-9]+$ ]] || had=0
-  [ "$3" -le "$had" ] || put "$readf" "$3 $(now)"
+  [ "$3" -le "$had" ] || put "$readf" "$3 $stamp"
+}
+
+where() { # where <channel>
+  [ $# -ge 1 ] || die 2 "usage: tincan.sh where <channel>"
+  setup "$1" "" optional
+  need_file
+  echo "$file"
 }
 
 who() { # who <channel> [<label>]
@@ -454,5 +575,7 @@ case $cmd in
   read) read_up_to "$@" ;;
   who) who "$@" ;;
   list) list_channels ;;
-  *) die 2 "usage: tincan.sh open|join|reopen|post|close|watch|read|who|list <channel> [<label>]" ;;
+  body) body_of "$@" ;;
+  where) where "$@" ;;
+  *) die 2 "usage: tincan.sh open|join|reopen|post|close|watch|read|who|list|body|where <channel> [<label>]" ;;
 esac

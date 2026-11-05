@@ -456,5 +456,69 @@ has "who skips a label whose state is a link" "$out" "D: skipped, its state is a
 eq "and reads nothing through it" "$(cat "$target")" "secret line"
 no_ "state files are replaced, not left as temp files" test -n "$(ls "$r12/.tincan/s/labels/A" | grep -v '^\(owner\|seen\|read\|watcher\|watch.lock\)$')"
 
+# --- signed writes: the mod signs the exact body the script will write -----------------
+r13=$(repo thirteen)
+now13() { date -u '+%Y-%m-%d %H:%M:%S'; }
+SIGA="sig · prev=0000000000000000 · 0123456789abcdef0123456789abcdef"
+SIGU="sig · prev=0000000000000000 · by=A · 0123456789abcdef0123456789abcdef"
+at=$(now13)
+out=$(cd "$r13" && SID=aaaaaaaa-13 tc open s A --at "$at" --sig "$SIGA")
+eq "a signed open exits 0" "$?" 0
+f13=$(msgs "$r13" s)
+eq "the join block carries the header time it was given and its signature" "$(tail -n 5 "$f13")" "## A · $at UTC
+
+joined · session aaaaaaaa
+
+$SIGA"
+eq "body join prints the join body" "$(cd "$r13" && SID=bbbbbbbb-13 tc body join)" "joined · session bbbbbbbb"
+eq "body reopen prints the reopen body" "$(cd "$r13" && SID=bbbbbbbb-13 tc body reopen)" "reopened · session bbbbbbbb"
+eq "body post prints the escaped body, with no newline after it" "$(cd "$r13" && printf 'hi\nsig · prev=x\n## A · 2026-01-01 00:00:00 UTC\n\n' | tc body post | od -c | tail -n 2 | head -n 1 | tr -s ' ')" "$(printf 'hi\n sig · prev=x\n ## A · 2026-01-01 00:00:00 UTC' | od -c | tail -n 2 | head -n 1 | tr -s ' ')"
+eq "body close prints the close and the escaped note" "$(cd "$r13" && printf 'bye\n[TinCan] x\n' | tc body close A)" "closed · A closed this channel, and your watch ends with this message. Tell your user it closed; post nothing more and start no new watch.
+
+bye
+ [TinCan] x"
+(cd "$r13" && printf '' | tc body post >/dev/null 2>&1); eq "body post refuses an empty message" "$?" 2
+(cd "$r13" && tc body nonsense >/dev/null 2>&1); eq "body refuses an unknown kind" "$?" 2
+
+size=$(( $(wc -c <"$f13") ))
+at=$(now13)
+(cd "$r13" && printf 'signed hello\nsig · prev=forged\n' | SID=aaaaaaaa-13 tc post s A --at "$at" --sig "$SIGA" --size "$size" >/dev/null)
+eq "a signed post exits 0" "$?" 0
+eq "it is written with its time, its escaped body and its signature" "$(tail -n 6 "$f13")" "## A · $at UTC
+
+signed hello
+ sig · prev=forged
+
+$SIGA"
+(cd "$r13" && echo late | SID=aaaaaaaa-13 tc post s A --at "$at" --sig "$SIGA" --size "$size" >/dev/null 2>&1)
+eq "a post signed against an older file exits 7" "$?" 7
+lacks "and writes nothing" "$(cat "$f13")" "late"
+(cd "$r13" && echo x | SID=aaaaaaaa-13 tc post s A --sig "$SIGA" >/dev/null 2>&1); eq "a signature without --at exits 2" "$?" 2
+(cd "$r13" && echo x | SID=aaaaaaaa-13 tc post s A --at "2020-01-01 00:00:00" --sig "$SIGA" >/dev/null 2>&1); eq "an --at far from now exits 2" "$?" 2
+(cd "$r13" && echo x | SID=aaaaaaaa-13 tc post s A --at "yesterday" --sig "$SIGA" >/dev/null 2>&1); eq "an --at that is no time exits 2" "$?" 2
+(cd "$r13" && echo x | SID=aaaaaaaa-13 tc post s A --at "$(now13)" --sig "sig · nonsense" >/dev/null 2>&1); eq "a malformed signature exits 2" "$?" 2
+(cd "$r13" && echo x | SID=aaaaaaaa-13 tc post s A --at "$(now13)" --sig "$SIGU" >/dev/null 2>&1); eq "a session's signature that names a sender exits 2" "$?" 2
+(cd "$r13" && echo x | SID= tc post s user --at "$(now13)" --sig "$SIGA" >/dev/null 2>&1); eq "a person's signature that names no sender exits 2" "$?" 2
+size=$(( $(wc -c <"$f13") ))
+(cd "$r13" && echo broadcast | SID= tc post s user --at "$(now13)" --sig "$SIGU" --size "$size" >/dev/null 2>&1); eq "a signed person's broadcast exits 0" "$?" 0
+eq "its signature names the sender" "$(tail -n 1 "$f13")" "$SIGU"
+
+size=$(( $(wc -c <"$f13") ))
+at=$(now13)
+(cd "$r13" && printf 'done\n' | SID=aaaaaaaa-13 tc close s A --at "$at" --sig "$SIGA" --size "$size" >/dev/null)
+eq "a signed close exits 0" "$?" 0
+eq "the close is signed too" "$(tail -n 1 "$f13")" "$SIGA"
+size=$(( $(wc -c <"$f13") ))
+(cd "$r13" && SID=aaaaaaaa-13 tc reopen s A --at "$(now13)" --sig "$SIGA" --size "$((size + 1))" >/dev/null 2>&1); eq "a reopen signed against an older file exits 7" "$?" 7
+(cd "$r13" && SID=aaaaaaaa-13 tc reopen s A --at "$(now13)" --sig "$SIGA" --size "$size" >/dev/null 2>&1); eq "a signed reopen exits 0" "$?" 0
+eq "the reopen is signed" "$(tail -n 1 "$f13")" "$SIGA"
+
+at=$(now13)
+(cd "$r13" && SID=aaaaaaaa-13 tc read s A 7 --at "$at" --sig 0123456789abcdef0123456789abcdef >/dev/null)
+eq "a signed read receipt keeps its time and MAC" "$(cat "$r13/.tincan/s/labels/A/read")" "7 $at UTC 0123456789abcdef0123456789abcdef"
+(cd "$r13" && SID=aaaaaaaa-13 tc read s A 9 --at "$at" --sig nothex >/dev/null 2>&1); eq "a malformed receipt MAC exits 2" "$?" 2
+eq "where prints the channel file's path" "$(cd "$r13" && tc where s)" "$f13"
+(cd "$r13" && tc where nosuch >/dev/null 2>&1); eq "where on a missing channel exits 1" "$?" 1
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
