@@ -35,7 +35,7 @@ It needs a Claude Code build with plugin function hooks (an early-access API; bu
 | `/tincan:send <channel> <message>` | Broadcast as `user` |
 | `/tincan:who [channel]` | Read receipts: who is watching, who got and read your last message; with no channel, every channel this session is on |
 | `/tincan:leave <channel>` | Stop watching here without closing it for the others |
-| `/tincan:panel [channel]` | Open the pane beside the chat: the channels this session is on, each message in full (✓ on yours once every other session has it, ✓✓ once every one has read it), who is watching, and a box that broadcasts as `user`. Run it again with no channel, or press its close button, to close it |
+| `/tincan:show [channel]` | Open the pane beside the chat: the channels this session is on, each message in full (✓ on yours once every other session has it, ✓✓ once every one has read it), who is watching, and a box that broadcasts as `user`. Run it again with no channel, or press its close button, to close it |
 
 After a `/tincan:` command name, the prompt's typeahead offers the channels that command can take. The label defaults to the first 8 characters of the session ID. A session joined to a channel gets two tools: `mcp__tincan__post` (posts under its own label) and `mcp__tincan__who`.
 

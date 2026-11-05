@@ -122,7 +122,7 @@ test('before any join the pane says to join first', async ($, on) => {
 test('the pane shows the channels, each message in full, your receipts and who is watching', async ($, on) => {
   engine(on)
   await $.command.run(typed('tincan:join', 'ch as A'))
-  const opened = await $.command.run(typed('tincan:panel', ''))
+  const opened = await $.command.run(typed('tincan:show', ''))
   expect(opened.text).toContain('Opened the TinCan pane')
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE_PROPS, surface })
@@ -146,7 +146,7 @@ test('once every other session has read your message it gets ✓✓', async ($, 
   STATE['/repo/.tincan/ch/labels/C/read'] = `${OWN + 8} 2026-11-03 22:32:00 UTC`
   try {
     await $.command.run(typed('tincan:join', 'ch as A'))
-    await $.command.run(typed('tincan:panel', 'ch'))
+    await $.command.run(typed('tincan:show', 'ch'))
     const ui = await $.ui.mount({ ...PANE_PROPS, surface: 'terminal' })
     expect((await ui.findAll({ type: 'Text', text: /^✓+$/ })).map((t) => t.text)).toEqual(['✓✓'])
     await ui.unmount()
@@ -158,7 +158,7 @@ test('once every other session has read your message it gets ✓✓', async ($, 
 test('Enter in the box broadcasts as user on the channel shown', async ($, on) => {
   const t = engine(on)
   await $.command.run(typed('tincan:join', 'ch as A'))
-  await $.command.run(typed('tincan:panel', ''))
+  await $.command.run(typed('tincan:show', ''))
   const ui = await $.ui.mount({ ...PANE_PROPS, surface: 'terminal' })
   await ui.input({ key: 'say', text: 'stack is back up' })
   const post = t.runs.find((r) => r.args[0] === 'post')
@@ -167,20 +167,20 @@ test('Enter in the box broadcasts as user on the channel shown', async ($, on) =
   await ui.unmount()
 })
 
-test('panel refuses a channel this session is not on', async ($, on) => {
+test('show refuses a channel this session is not on', async ($, on) => {
   engine(on)
-  const r = await $.command.run(typed('tincan:panel', 'other'))
+  const r = await $.command.run(typed('tincan:show', 'other'))
   expect(r.text).toContain("isn't on 'other'")
 })
 
-test('/tincan:panel with no channel closes an open pane, and the close button does too', async ($, on) => {
+test('/tincan:show with no channel closes an open pane, and the close button does too', async ($, on) => {
   const t = engine(on)
   await $.command.run(typed('tincan:join', 'ch as A'))
-  expect((await $.command.run(typed('tincan:panel', ''))).text).toContain('Opened')
+  expect((await $.command.run(typed('tincan:show', ''))).text).toContain('Opened')
   expect(t.isOpen()).toBe(true)
-  expect((await $.command.run(typed('tincan:panel', ''))).text).toContain('Closed the TinCan pane')
+  expect((await $.command.run(typed('tincan:show', ''))).text).toContain('Closed the TinCan pane')
   expect(t.isOpen()).toBe(false)
-  await $.command.run(typed('tincan:panel', 'ch'))
+  await $.command.run(typed('tincan:show', 'ch'))
   const ui = await $.ui.mount({ ...PANE_PROPS, surface: 'terminal' })
   await ui.press({ key: 'close' })
   expect(t.isOpen()).toBe(false)
@@ -192,7 +192,7 @@ test('a channel file that is a symbolic link is not read: the pane shows no mess
   LINKED.add('/repo/.tincan/ch/messages.md')
   try {
     await $.command.run(typed('tincan:join', 'ch as A'))
-    await $.command.run(typed('tincan:panel', 'ch'))
+    await $.command.run(typed('tincan:show', 'ch'))
     const ui = await $.ui.mount({ ...PANE_PROPS, surface: 'terminal' })
     expect(await ui.find({ key: 'body-1' })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: /^B$/ })).toBeUndefined()

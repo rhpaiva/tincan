@@ -28,7 +28,7 @@ test('right after the command, the typeahead offers it with each channel that fi
 test('while the channel is being typed, it offers the names that start that way', () => {
   expect(texts('/tincan:join al')).toEqual(['alpha'])
   expect(texts('/tincan:join li')).toEqual([])
-  expect(texts('/tincan:panel l')).toEqual(['live'])
+  expect(texts('/tincan:show l')).toEqual(['live'])
   expect(texts('/tincan:send l')).toEqual(['live'])
   expect(texts('/tincan:leave x')).toEqual([])
   expect(suggestionsFor('/tincan:close l', CHANNELS, MINE)[0]?.description).toBe("you're on it as A")

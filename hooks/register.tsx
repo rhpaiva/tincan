@@ -294,8 +294,8 @@ async function closePane($: $) {
   await $.ui.close({ id: PANE })
 }
 
-/** `/tincan:panel` opens the pane, or closes it when it is open; with a channel it opens on that channel. */
-async function panel($: $, args: string): Promise<Answer> {
+/** `/tincan:show` opens the pane, or closes it when it is open; with a channel it opens on that channel. */
+async function show($: $, args: string): Promise<Answer> {
   const { first: channel } = head(args)
   if (!channel && (await paneIsOpen($))) {
     await closePane($)
@@ -613,9 +613,9 @@ export const register: Register = (on) => {
     text: 'TinCan: leave failed.',
   }))
 
-  on('command.run', { command: 'tincan:panel' }, async ($, e) =>
-    (await fromPerson($, e.origin.kind)) ? panel($, e.args) : NOT_A_PERSON,
-  ).catch(() => ({ text: 'TinCan: panel failed.' }))
+  on('command.run', { command: 'tincan:show' }, async ($, e) =>
+    (await fromPerson($, e.origin.kind)) ? show($, e.args) : NOT_A_PERSON,
+  ).catch(() => ({ text: 'TinCan: show failed.' }))
 
   on('ui.close', ($, e, next) => {
     if (e.id === PANE) {

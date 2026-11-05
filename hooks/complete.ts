@@ -26,7 +26,7 @@ function fitting(verb: string, channels: Channel[], mine: ReadonlyMap<string, st
     case 'close':
     case 'leave':
     case 'send':
-    case 'panel':
+    case 'show':
       return [...mine.keys()].sort().map(on)
     default:
       return [] // open takes a new name
