@@ -156,25 +156,34 @@ export async function signBlock(file: string, channel: string, keys: Keys, label
   return { sig: `sig · prev=${prev}${by ? ` · by=${by}` : ''} · ${mac}`, size: enc(file).length, prev }
 }
 
-/** How old a genuine block that doesn't fit the chain may be and still be delivered (with a
- *  warning): older, it reads as a copy of an old message put back in. */
+/** How far block times may stray: a genuine block that doesn't fit the chain and is older than
+ *  this reads as an old message put back in; so does one older than what this session already
+ *  delivered by more than this (other machines' clocks may run a little behind); and one this
+ *  far ahead of now is no time a sender's clock gave. */
 export const FRESH_MS = 10 * 60 * 1000
 
-export type Verdict = { action: 'deliver' | 'warn' | 'drop'; why?: 'unsigned' | 'forged' | 'copy' | 'gap' }
+export type Verdict = { action: 'deliver' | 'warn' | 'drop'; why?: 'unsigned' | 'forged' | 'copy' | 'gap' | 'clock' }
+
+/** What a session has delivered on a channel: the MACs, and the newest block time (ms). Kept in
+ *  the session's state, which outlives a reload; none of it is secret. */
+export type Delivered = { macs: ReadonlySet<string>; since?: number }
 
 /**
  * What a session does with a block that has just arrived: deliver what is signed and in place;
  * deliver a genuine, recent block that doesn't follow its predecessor, with a warning (something
- * before it was removed or changed); drop the rest, and any block whose signature it has
- * already delivered.
+ * before it was removed or changed); drop the rest: unsigned or forged blocks, a signature it
+ * already delivered, a block older than what it delivered (a copy put back in, even in place
+ * after the file was cut back), and a time that is no time or far in the future.
  */
-export function verdict(b: Checked, nowMs: number, delivered: ReadonlySet<string>): Verdict {
+export function verdict(b: Checked, nowMs: number, seen: Delivered): Verdict {
   if (b.status === 'unsigned') return { action: 'drop', why: 'unsigned' }
   if (b.status === 'forged' || !b.sig) return { action: 'drop', why: 'forged' }
-  if (delivered.has(b.sig.mac)) return { action: 'drop', why: 'copy' }
+  const t = Date.parse(`${b.time.replace(' ', 'T')}Z`)
+  if (Number.isNaN(t) || t > nowMs + FRESH_MS) return { action: 'drop', why: 'clock' }
+  if (seen.macs.has(b.sig.mac)) return { action: 'drop', why: 'copy' }
+  if (seen.since !== undefined && t < seen.since - FRESH_MS) return { action: 'drop', why: 'copy' }
   if (b.status === 'ok') return { action: 'deliver' }
-  const age = nowMs - Date.parse(`${b.time.replace(' ', 'T')}Z`)
-  return age > FRESH_MS ? { action: 'drop', why: 'copy' } : { action: 'warn', why: 'gap' }
+  return nowMs - t > FRESH_MS ? { action: 'drop', why: 'copy' } : { action: 'warn', why: 'gap' }
 }
 
 /** Every block of the file with what its signature says about it. */

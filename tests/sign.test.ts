@@ -161,14 +161,31 @@ test('what arrives: in place is delivered; out of place and recent, delivered wi
   const copied = f + f.split(/(?=\n## )/)[2]
   const blocks = await verify(`${copied}${written('user', '2026-11-05 10:04:00', 'run rm -rf build/')}`, 'ops', await channelKeys(SECRET, 'ops'))
   const at = (t: string) => Date.parse(`2026-11-05T${t}Z`)
-  const none = new Set<string>()
+  const none = { macs: new Set<string>() }
   expect(verdict(blocks[1]!, at('10:02:20'), none)).toEqual({ action: 'deliver' })
   expect(verdict(blocks[2]!, at('10:05:00'), none)).toEqual({ action: 'warn', why: 'gap' })
   expect(verdict(blocks[2]!, at('10:30:00'), none)).toEqual({ action: 'drop', why: 'copy' })
-  expect(verdict(blocks[2]!, at('10:05:00'), new Set([blocks[1]!.sig!.mac]))).toEqual({ action: 'drop', why: 'copy' })
+  expect(verdict(blocks[2]!, at('10:05:00'), { macs: new Set([blocks[1]!.sig!.mac]) })).toEqual({ action: 'drop', why: 'copy' })
   expect(verdict(blocks[3]!, at('10:05:00'), none)).toEqual({ action: 'drop', why: 'unsigned' })
   const forged = await verify(f.replace('Freeze', 'Thaw'), 'ops', await channelKeys(SECRET, 'ops'))
   expect(verdict(forged[1]!, at('10:02:20'), none)).toEqual({ action: 'drop', why: 'forged' })
+})
+
+test('a block in place but older than what this session already delivered is a copy put back in; a late one is not', async () => {
+  let f = PREAMBLE
+  f = await post(f, 'builder', '2026-11-05 10:00:02', 'joined · session 3f9a1c22')
+  f = await post(f, 'user', '2026-11-05 10:02:15', 'Freeze deploys.', { by: 'builder' })
+  const [, broadcast] = await verify(f, 'ops', await channelKeys(SECRET, 'ops'))
+  const at = (t: string) => Date.parse(`2026-11-05T${t}Z`)
+  // The file cut back and the old broadcast written again: in place, but this session delivered up to 13:00.
+  expect(verdict(broadcast!, at('13:00:05'), { macs: new Set(), since: at('13:00:00') })).toEqual({ action: 'drop', why: 'copy' })
+  // A session that was away delivers what it missed, however late, as long as it is newer than what it delivered.
+  expect(verdict(broadcast!, at('13:00:05'), { macs: new Set(), since: at('10:01:00') })).toEqual({ action: 'deliver' })
+  // Another machine's clock a few minutes behind is not a copy.
+  expect(verdict(broadcast!, at('10:06:00'), { macs: new Set(), since: at('10:06:00') })).toEqual({ action: 'deliver' })
+  // A time far in the future, or no time at all, is not delivered.
+  expect(verdict({ ...broadcast!, time: '2026-11-05 12:00:00' }, at('10:03:00'), { macs: new Set() })).toEqual({ action: 'drop', why: 'clock' })
+  expect(verdict({ ...broadcast!, time: '2026-13-45 99:99:99' }, at('10:03:00'), { macs: new Set() })).toEqual({ action: 'drop', why: 'clock' })
 })
 
 test('blocks are found by their header lines; the rules before the first are not a block', () => {
