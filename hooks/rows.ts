@@ -87,7 +87,8 @@ function preview(body: string[]): string {
 
 /** The one line for a row TinCan wrote, or undefined for any other text. */
 export function compact(text: string): string | undefined {
-  const lines = text.split('\n')
+  // A session stores a plugin's prompt after the engine's own line naming the plugin.
+  const lines = text.replace(/^The [A-Za-z0-9._@-]+ plugin sent a message:\n/, '').split('\n')
   const first = lines[0] ?? ''
 
   const delivery = new RegExp(`^\\[TinCan\\] New on channel '(${NAME})', where you are '${NAME}'\\. `).exec(first)

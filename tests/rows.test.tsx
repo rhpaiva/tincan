@@ -71,6 +71,13 @@ test("a name outside TinCan's name rules gets no line, so nothing in it is drawn
   expect(compact(joinsNote('o‮ps', msg('reviewer', '10:01:40', 'joined · session a818aea9')))).toBeUndefined()
 })
 
+test("the engine's own line before TinCan's prompt (as a real session stores it) doesn't stop the row", () => {
+  expect(compact(`The tincan plugin sent a message:\n${one}`)).toBe('🥫 ops · reviewer: The migration in 4a85998 drops the `seen` column.')
+  // Only that one line, and only before TinCan's own: anything else in front is not TinCan's row.
+  expect(compact(`hello\n${one}`)).toBeUndefined()
+  expect(compact(`The tincan plugin sent a message:\nThe tincan plugin sent a message:\n${one}`)).toBeUndefined()
+})
+
 test("text that isn't one of TinCan's rows gets no line", () => {
   expect(compact('hello')).toBeUndefined()
   expect(compact("[TinCan] New on channel 'ops', where you are 'builder'. but nothing else")).toBeUndefined()
