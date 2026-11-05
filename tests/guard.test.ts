@@ -20,6 +20,8 @@ const by = (kind: 'composer' | 'bridge' | 'sdk' | 'unclassified') => (command: s
   presentation: { isFullscreen: false, columns: 120 },
 })
 const typed = by('composer')
+// A headless test run: with the switch on, it may name its secret.
+const headless = by('sdk')
 
 // Sessions here hold this secret, as a headless test run may (TINCAN_ALLOW_HEADLESS=1): sample data.
 const SIGNED = { TINCAN_ALLOW_HEADLESS: '1', TINCAN_TEST_SECRET: 'tc1-abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst' }
@@ -109,7 +111,7 @@ test("the model's file edits ask the person under .tincan and in the plugin, and
 
 test('after the session read outside content, every post asks the person until /clear or a compaction', async ($, on) => {
   engine(on)
-  await $.command.run(typed('tincan:join', 'ch as A'))
+  await $.command.run(headless('tincan:join', 'ch as A'))
   const post = check('mcp__tincan__post', { channel: 'ch', message: 'x' })
   expect((await $.tool.check(post)).decision).toBe('allow')
   await $.tool.call({ tool: 'WebFetch', url: 'https://example.com', prompt: 'read it' } as never)
@@ -169,7 +171,7 @@ test("the guard covers the folder of every channel this session is on, and TINCA
     { ...SIGNED, TINCAN_DIR: '/opt/team-lines' },
     "TinCan: on channel 'ch' as 'A' (/srv/chan/ch/messages.md)\n--- history ---\n--- end of history (line 20) ---\n",
   )
-  await $.command.run(typed('tincan:join', 'ch as A'))
+  await $.command.run(headless('tincan:join', 'ch as A'))
   expect((await $.tool.check(check('Edit', { file_path: '/srv/chan/ch/messages.md' }))).decision).toBe('ask')
   expect((await $.tool.check(check('Bash', { command: 'cat /srv/chan/ch/labels/A/read' }))).decision).toBe('ask')
   expect((await $.tool.check(check('Write', { file_path: '/opt/team-lines/x/messages.md' }))).decision).toBe('ask')

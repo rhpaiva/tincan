@@ -87,11 +87,13 @@ function engine(on: On, posted = '## A · 2026-11-03 22:00:05 UTC') {
     runs,
     toasts,
     clock,
+    // The person's notices, less the one that says this headless run uses its test secret.
     notices: () =>
       session
         .appended()
         .filter((r) => r.message.type === 'system')
-        .map((r) => JSON.stringify(r.message.content)),
+        .map((r) => JSON.stringify(r.message.content))
+        .filter((n) => !n.includes('uses the test secret')),
     notes: () =>
       session
         .appended()
@@ -121,7 +123,7 @@ function engine(on: On, posted = '## A · 2026-11-03 22:00:05 UTC') {
 const typed = (command: string, args: string) => ({
   command,
   args,
-  origin: { kind: 'composer' as const },
+  origin: { kind: 'sdk' as const }, // a headless test run, which may name its secret
   presentation: { isFullscreen: false, columns: 120 },
 })
 

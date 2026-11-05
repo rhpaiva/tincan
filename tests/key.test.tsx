@@ -182,16 +182,36 @@ test('the model cannot post before the session has its secret', async ($, on) =>
   expect(JSON.stringify(r)).toContain('/tincan:key')
 })
 
-test('a test run may name its secret, but only with the headless switch on', async ($, on) => {
+const headless = (command: string, args: string) => ({ ...typed(command, args), origin: { kind: 'sdk' as const } })
+
+test('a headless test run may name its secret, with the switch on, and says so', async ($, on) => {
   const t = engine(on, { TINCAN_ALLOW_HEADLESS: '1', TINCAN_TEST_SECRET: SECRET })
-  const r = await $.command.run(typed('tincan:join', 'ch as A'))
+  const r = await $.command.run(headless('tincan:join', 'ch as A'))
   expect(r.text).toContain("On channel 'ch' as 'A'")
   expect(t.runs.some((a) => a[0] === 'join')).toBe(true)
+  expect(t.notices().join('\n')).toContain('test secret')
 })
 
-test('without the switch the named secret is ignored', async ($, on) => {
-  const t = engine(on, { TINCAN_TEST_SECRET: SECRET })
-  const r = await $.command.run(typed('tincan:join', 'ch as A'))
-  expect(r.text).toContain('Paste your TinCan secret')
+test("a person's session never takes a named secret, even with both variables set (a project's settings could set them)", async ($, on) => {
+  const t = engine(on, { TINCAN_ALLOW_HEADLESS: '1', TINCAN_TEST_SECRET: SECRET })
+  for (const kind of ['composer', 'bridge'] as const) {
+    const r = await $.command.run({ ...typed('tincan:join', 'ch as A'), origin: { kind } })
+    expect(r.text).toContain('Paste your TinCan secret')
+  }
   expect(t.runs.some((a) => a[0] === 'join')).toBe(false)
+})
+
+test('a new secret is made only at the prompt, never over Remote Control', async ($, on) => {
+  const t = engine(on)
+  const r = await $.command.run({ ...typed('tincan:key', 'new'), origin: { kind: 'bridge' as const } })
+  expect(r.text).toContain('at your computer')
+  expect(t.opened).toEqual([])
+})
+
+test('a surface TinCan does not know gets neither the box nor the secret', async ($, on) => {
+  engine(on)
+  await $.command.run(typed('tincan:key', 'new'))
+  const ui = await $.ui.mount({ ...KEY_PROPS, surface: 'mobile' })
+  expect(await ui.find({ key: 'secret' })).toBeUndefined()
+  await ui.unmount()
 })

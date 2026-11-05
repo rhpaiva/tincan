@@ -52,7 +52,7 @@ const entered = (channel: string) =>
 const typed = (command: string, args: string) => ({
   command,
   args,
-  origin: { kind: 'composer' as const },
+  origin: { kind: 'sdk' as const }, // a headless test run, which may name its secret
   presentation: { isFullscreen: false, columns: 120 },
 })
 

@@ -54,12 +54,24 @@ async function setSecret($: $, s: string, opts: { quiet?: boolean } = {}): Promi
   return w
 }
 
-/** In a headless test run alone (TINCAN_ALLOW_HEADLESS=1), the secret TINCAN_TEST_SECRET names. */
-export async function testSecret($: $) {
-  if (secret) return
+// The surfaces that run on the person's own machine. A secret is drawn, or typed, only there:
+// a phone, or any surface not named here, may be drawn through the cloud.
+const LOCAL = new Set(['terminal', 'desktop', 'vscode'])
+
+/**
+ * For a command from a headless test run alone (origin 'sdk', with TINCAN_ALLOW_HEADLESS=1),
+ * the secret TINCAN_TEST_SECRET names. Never for a person's command or at a session's start:
+ * a project's settings can set both variables, and a secret it chose would let it sign
+ * broadcasts this session trusts.
+ */
+async function testSecret($: $, origin: string) {
+  if (secret || origin !== 'sdk') return
   if ((await $.env.get('TINCAN_ALLOW_HEADLESS').catch(() => undefined)) !== '1') return
   const s = parseSecret((await $.env.get('TINCAN_TEST_SECRET').catch(() => undefined)) ?? '')
-  if (s) await setSecret($, s, { quiet: true })
+  if (s) {
+    await tell($, 'TinCan: this headless run uses the test secret TINCAN_TEST_SECRET names.')
+    await setSecret($, s, { quiet: true })
+  }
 }
 
 async function openBox($: $, mode: 'paste' | 'new', what: string) {
@@ -81,8 +93,8 @@ async function closeBox($: $) {
 }
 
 /** Undefined when the session has its secret (the caller goes on); else the answer to give, with the box open. */
-export async function needSecret($: $, p: Pending): Promise<string | undefined> {
-  await testSecret($)
+export async function needSecret($: $, p: Pending, origin: string): Promise<string | undefined> {
+  await testSecret($, origin)
   if (secret) return undefined
   waiting = p
   await openBox($, 'paste', p.what)
@@ -90,8 +102,11 @@ export async function needSecret($: $, p: Pending): Promise<string | undefined> 
 }
 
 /** `/tincan:key` opens the box; `/tincan:key new` makes a secret and shows it there once. */
-export async function keyCommand($: $, args: string): Promise<{ text: string; then?: Pending }> {
+export async function keyCommand($: $, args: string, origin: string): Promise<{ text: string; then?: Pending }> {
   const word = args.trim()
+  if (word === 'new' && origin !== 'composer') {
+    return { text: 'Make a new secret at your computer (/tincan:key new at its prompt): TinCan shows it only there.' }
+  }
   if (word === 'new') {
     shown = newSecret()
     await openBox($, 'new', '')
@@ -102,6 +117,7 @@ export async function keyCommand($: $, args: string): Promise<{ text: string; th
     }
   }
   if (word !== '') return { text: 'Usage: /tincan:key, or /tincan:key new' }
+  await testSecret($, origin)
   await openBox($, 'paste', waiting?.what ?? '')
   if (secret) return { text: `This session's secret: ${await fingerprint(secret)}. Paste another in the TinCan box to replace it.` }
   return { text: 'Paste your TinCan secret in the TinCan box. No secret yet? /tincan:key new makes one.' }
@@ -156,8 +172,7 @@ export async function keyClosed($: $) {
 export async function drawKeyBox($: $, e: Parameters<EngineInterface['ui']['resolve']>[0], onSubmit: (value: string) => void) {
   const { Box, Text, Button } = $.ui.resolve(e)
   const v = await read($, box)
-  // A phone draws through the cloud: never send the secret there, nor ask for it.
-  const local = e.surface !== 'mobile'
+  const local = LOCAL.has(e.surface)
   if (v.mode === 'new' && shown) {
     return (
       <Box flexDirection="column">
@@ -167,7 +182,7 @@ export async function drawKeyBox($: $, e: Parameters<EngineInterface['ui']['reso
             {shown}
           </Text>
         ) : (
-          <Text>Open this box at your computer to see it.</Text>
+          <Text>Open this box at your computer to see it: TinCan never draws a secret on this surface.</Text>
         )}
         <Text>Copy it into your password manager now: TinCan shows it this once. Give it to your other sessions with /tincan:key.</Text>
         <Text dimColor>Never paste it into the prompt.</Text>
@@ -192,7 +207,7 @@ export async function drawKeyBox($: $, e: Parameters<EngineInterface['ui']['reso
           onSubmit={onSubmit}
         />
       ) : (
-        <Text>Paste it at your computer: this surface has no text box.</Text>
+        <Text>Paste it at your computer: TinCan takes a secret only there.</Text>
       )}
       {v.error ? <Text color="error">{v.error}</Text> : null}
       <Text dimColor>Esc cancels · never paste it into the prompt</Text>
