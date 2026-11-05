@@ -21,15 +21,14 @@ test('a delivery of one message is one line: channel, sender and the first line 
   expect(compact(one)).toBe('🥫 ops · reviewer: The migration in 4a85998 drops the `seen` column.')
 })
 
-test("a person's broadcast reads as user", () => {
-  expect(compact(frame(ops, msg('user', '10:02:15', 'Freeze deploys until the migration lands.')))).toBe(
-    '🥫 ops · user: Freeze deploys until the migration lands.',
-  )
+test("a person's verified broadcast is marked, with the session it was sent from", () => {
+  const broadcast = ['## user · 2026-11-05 10:02:15 UTC · from builder', '', 'Freeze deploys until the migration lands.'].join('\n')
+  expect(compact(frame(ops, broadcast))).toBe('📣 ops · user (from builder): Freeze deploys until the migration lands.')
 })
 
 test('a batch names how many messages came and who sent them', () => {
   const batch = frame(ops, [msg('reviewer', '10:03:02', 'one'), msg('docs', '10:03:05', 'two'), msg('reviewer', '10:03:09', 'three'), msg('user', '10:03:10', 'four')].join('\n\n'))
-  expect(compact(batch)).toBe('🥫 ops · 4 messages: reviewer, docs, user')
+  expect(compact(batch)).toBe('🥫 ops · 4 messages: reviewer, docs, 📣 user')
 })
 
 test('the preview skips blank lines, folds spaces and cuts a long line', () => {

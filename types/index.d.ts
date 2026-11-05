@@ -15,6 +15,8 @@ export type TincanMessage = {
   /** Its header line, unique within the channel. */
   id: string
   label: string
+  /** On a person's broadcast: the session it was sent from, as its signature says; '' otherwise. */
+  by: string
   /** Where its header is in the channel file, from 1: what seen and read receipts compare with. */
   line: number
   /** HH:MM:SS, UTC. */
@@ -35,6 +37,10 @@ export type TincanPane = {
   messages: TincanMessage[]
   /** This session first, then the others on the channel, each watching or away. */
   watching: { label: string; isWatching: boolean }[]
+  /** How many blocks of the channel TinCan couldn't verify: never drawn, only counted. */
+  hidden: number
+  /** True while the session has no secret to verify with: nothing is drawn. */
+  locked: boolean
 }
 
 /** What the secret's box draws. None of it is secret: the secret lives in the mod's memory alone. */
@@ -56,6 +62,8 @@ declare module 'claude-code' {
       subs: TincanSub[]
       pane: Shaped<TincanPane>
       key: Shaped<TincanKey>
+      /** Per channel: what this session has delivered (MACs, newest block time in ms), so a copy put back is dropped. */
+      delivered: Record<string, { since: number; macs: string[] }>
       /** What made this session read outside content since its last /clear or compaction; '' when nothing has. */
       tainted: string
     }
