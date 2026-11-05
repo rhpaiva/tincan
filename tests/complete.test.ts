@@ -5,6 +5,9 @@ import { parseList, suggestionsFor, wantsChannels } from '../hooks/complete'
 // Channel names in the prompt box's typeahead, and /tincan:who with no channel.
 // Every channel here is sample data.
 
+// Sessions here hold this secret, as a headless test run may (TINCAN_ALLOW_HEADLESS=1): sample data.
+const SIGNED = { TINCAN_ALLOW_HEADLESS: '1', TINCAN_TEST_SECRET: 'tc1-abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst' }
+
 const CHANNELS = parseList('alpha open\nbeta closed\nlive open\n')
 const MINE = new Map([['live', 'A']])
 const texts = (before: string) => suggestionsFor(before, CHANNELS, MINE).map((s) => s.text)
@@ -56,7 +59,7 @@ const typed = (command: string, args: string) => ({
 function engine(on: On) {
   mock.clock(on)
   mock.session(on)
-  mock.env(on, {})
+  mock.env(on, SIGNED)
   on('session.id', () => ({ value: 'sess-1' }))
   on('ui.log', () => ({ value: undefined }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__tincan__${e.name}` } }))

@@ -3,6 +3,8 @@ import type { Elements, EngineInterface, Register, Timer } from 'claude-code'
 import type { TincanMessage, TincanPane, TincanSub } from '../types'
 import { parseList, suggestionsFor, wantsChannels } from './complete'
 import type { Channel } from './complete'
+import { KEY_PANE, acceptSecret, currentSecret, drawKeyBox, keyClosed, keyCommand, needSecret, testSecret } from './key'
+import type { Pending } from './key'
 import { CHANNEL_BELOW, MESSAGE, closeNote, compact, frame, joinsNote } from './rows'
 
 // TinCan. scripts/tincan.sh is the protocol (the channel files, their
@@ -130,6 +132,29 @@ async function fromPerson($: $, kind: string): Promise<boolean> {
 }
 
 const NOT_A_PERSON = { text: 'Only a person runs /tincan: commands, at the prompt or over Remote Control.' }
+
+/** A command that needs the session's secret: undefined when it has it, else the answer that
+ *  it waits, with the box open for the paste. */
+async function waitsFor($: $, verb: Pending['verb'], args: string): Promise<Answer | undefined> {
+  const what = `/tincan:${verb}${args.trim() ? ` ${args.trim()}` : ''}`
+  const wait = await needSecret($, { what, verb, args })
+  return wait === undefined ? undefined : { text: wait }
+}
+
+/** Runs the command that waited for the secret, now that the person has given it. */
+async function runPending($: $, p: Pending | undefined) {
+  if (!p) return
+  let a: Answer
+  if (p.verb === 'close') a = await close($, p.args)
+  else if (p.verb === 'send') a = await send($, p.args)
+  else a = await enter($, p.verb, p.args)
+  await tell($, a.text)
+  for (const c of a.context ?? []) await note($, c)
+}
+
+async function pasted($: $, value: string) {
+  await runPending($, await acceptSecret($, value))
+}
 
 const CHANNEL_TEXT = /(^|[^A-Za-z0-9_-])\.tincan(\/|\b)|tincan\.sh|\/tincan:/
 
@@ -562,6 +587,8 @@ async function leave($: $, args: string): Promise<Answer> {
 
 export const register: Register = (on) => {
   on('session.start', async ($, e, next) => {
+    // A headless test run may name its secret; a person pastes theirs (/tincan:key).
+    await testSecret($).catch(() => {})
     // After a reload the outside content the session read is still in the conversation.
     tainted ??= (await $.state.get(TAINTED).catch(() => undefined))?.value || undefined
     // After a reload the old watches died with the old module: start them again.
@@ -578,27 +605,27 @@ export const register: Register = (on) => {
   })
 
   on('command.run', { command: 'tincan:open' }, async ($, e) =>
-    (await fromPerson($, e.origin.kind)) ? enter($, 'open', e.args) : NOT_A_PERSON,
+    (await fromPerson($, e.origin.kind)) ? ((await waitsFor($, 'open', e.args)) ?? enter($, 'open', e.args)) : NOT_A_PERSON,
   ).catch(() => ({
     text: 'TinCan: open failed.',
   }))
   on('command.run', { command: 'tincan:join' }, async ($, e) =>
-    (await fromPerson($, e.origin.kind)) ? enter($, 'join', e.args) : NOT_A_PERSON,
+    (await fromPerson($, e.origin.kind)) ? ((await waitsFor($, 'join', e.args)) ?? enter($, 'join', e.args)) : NOT_A_PERSON,
   ).catch(() => ({
     text: 'TinCan: join failed.',
   }))
   on('command.run', { command: 'tincan:reopen' }, async ($, e) =>
-    (await fromPerson($, e.origin.kind)) ? enter($, 'reopen', e.args) : NOT_A_PERSON,
+    (await fromPerson($, e.origin.kind)) ? ((await waitsFor($, 'reopen', e.args)) ?? enter($, 'reopen', e.args)) : NOT_A_PERSON,
   ).catch(() => ({
     text: 'TinCan: reopen failed.',
   }))
   on('command.run', { command: 'tincan:close' }, async ($, e) =>
-    (await fromPerson($, e.origin.kind)) ? close($, e.args) : NOT_A_PERSON,
+    (await fromPerson($, e.origin.kind)) ? ((await waitsFor($, 'close', e.args)) ?? close($, e.args)) : NOT_A_PERSON,
   ).catch(() => ({
     text: 'TinCan: close failed.',
   }))
   on('command.run', { command: 'tincan:send' }, async ($, e) =>
-    (await fromPerson($, e.origin.kind)) ? send($, e.args) : NOT_A_PERSON,
+    (await fromPerson($, e.origin.kind)) ? ((await waitsFor($, 'send', e.args)) ?? send($, e.args)) : NOT_A_PERSON,
   ).catch(() => ({
     text: 'TinCan: send failed.',
   }))
@@ -613,15 +640,30 @@ export const register: Register = (on) => {
     text: 'TinCan: leave failed.',
   }))
 
+  on('command.run', { command: 'tincan:key' }, async ($, e) => {
+    if (!(await fromPerson($, e.origin.kind))) return NOT_A_PERSON
+    const r = await keyCommand($, e.args)
+    await runPending($, r.then)
+    return { text: r.text }
+  }).catch(() => ({ text: 'TinCan: key failed.' }))
+
+  // The secret's box: Esc cancels the command that waited for it.
+  on('ui.close', { id: KEY_PANE }, async ($, e, next) => {
+    await keyClosed($)
+    return next(e)
+  })
+
+  on('ui.render', { component: 'Pane', requestId: KEY_PANE }, ($, e) =>
+    drawKeyBox($, e, (value: string) => void pasted($, value).catch(() => {})),
+  )
+
   on('command.run', { command: 'tincan:show' }, async ($, e) =>
     (await fromPerson($, e.origin.kind)) ? show($, e.args) : NOT_A_PERSON,
   ).catch(() => ({ text: 'TinCan: show failed.' }))
 
-  on('ui.close', ($, e, next) => {
-    if (e.id === PANE) {
-      paneTimer?.cancel()
-      paneTimer = undefined
-    }
+  on('ui.close', { id: PANE }, ($, e, next) => {
+    paneTimer?.cancel()
+    paneTimer = undefined
     return next(e)
   })
 
@@ -762,6 +804,8 @@ export const register: Register = (on) => {
 
   on('tool.call', { tool: 'mcp__tincan__post' }, async ($, e) => {
     const { channel = '', message = '' } = e as unknown as { channel?: string; message?: string }
+    await testSecret($).catch(() => {})
+    if (!currentSecret()) return { deny: 'This session has no TinCan secret yet, so it can sign nothing. Ask your user to run /tincan:key.' }
     const s = subs.get(channel)
     if (!s) return { deny: `This session isn't on channel '${channel}'. Only the user joins channels (/tincan:join).` }
     const r = await run($, ['post', channel, s.label], envOf(s), message)

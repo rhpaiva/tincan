@@ -6,6 +6,9 @@ import type { On } from 'claude-code'
 // the test's own: tincan.sh never runs. The watch's output is fed by hand, a
 // line at a time, the way the script prints it.
 
+// Sessions here hold this secret, as a headless test run may (TINCAN_ALLOW_HEADLESS=1): sample data.
+const SIGNED = { TINCAN_ALLOW_HEADLESS: '1', TINCAN_TEST_SECRET: 'tc1-abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst' }
+
 type Feed = { push: (text: string) => void; end: (code: number) => void }
 
 const HEAD = '## B · 2026-11-03 22:00:00 UTC'
@@ -30,6 +33,7 @@ function engine(on: On, posted = '## A · 2026-11-03 22:00:05 UTC') {
   const toasts: string[] = []
   const clock = mock.clock(on)
   const session = mock.session(on)
+  mock.env(on, SIGNED)
   let feed: Feed | undefined
   let hold: Promise<void> | undefined
 

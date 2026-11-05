@@ -37,11 +37,25 @@ export type TincanPane = {
   watching: { label: string; isWatching: boolean }[]
 }
 
+/** What the secret's box draws. None of it is secret: the secret lives in the mod's memory alone. */
+export type TincanKey = {
+  /** 'paste' asks for the secret; 'new' shows one /tincan:key new made. */
+  mode: 'paste' | 'new'
+  /** How many characters have been typed: the box draws that many dots. */
+  dots: number
+  error: string
+  /** The command waiting for the secret, as typed; '' when none is. */
+  what: string
+  /** The fingerprint of the secret the session holds now; '' when none. */
+  fp: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     tincan: {
       subs: TincanSub[]
       pane: Shaped<TincanPane>
+      key: Shaped<TincanKey>
       /** What made this session read outside content since its last /clear or compaction; '' when nothing has. */
       tainted: string
     }

@@ -13,9 +13,12 @@ pass=0 fail=0
 repo="$work/repo"
 mkdir -p "$repo" && git -C "$repo" init -q -b main && git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
 
-cmd() { # cmd <name> <prompt> <expected text> [switch value]
+# The secret these sessions hold (sample data): honoured only with the headless switch on.
+SECRET=tc1-abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst
+
+cmd() { # cmd <name> <prompt> <expected text> [switch value] [secret]
   local out
-  out=$(cd "$repo" && TINCAN_ALLOW_HEADLESS=${4-1} timeout 120 claude -p "$2" --plugin-dir "$here" --model haiku --output-format json 2>/dev/null |
+  out=$(cd "$repo" && TINCAN_ALLOW_HEADLESS=${4-1} TINCAN_TEST_SECRET=${5-$SECRET} timeout 120 claude -p "$2" --plugin-dir "$here" --model haiku --output-format json 2>/dev/null |
     python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d.get("num_turns")); print(d.get("result") or "")')
   local turns=${out%%$'\n'*} text=${out#*$'\n'}
   if [ "$turns" = 0 ] && [[ $text == *"$3"* ]]; then pass=$((pass + 1)); else
@@ -24,6 +27,8 @@ cmd() { # cmd <name> <prompt> <expected text> [switch value]
 }
 
 cmd "a headless run without the switch is refused" "/tincan:open t as A" "Only a person runs /tincan: commands" 0
+cmd "a command without the secret waits for it" "/tincan:open t as A" "Paste your TinCan secret" 1 ""
+cmd "key with a secret shows its fingerprint" "/tincan:key" "This session's secret: "
 cmd "open" "/tincan:open t as A" "On channel 't' as 'A'"
 cmd "open an existing channel" "/tincan:open t as Z" "join it with /tincan:join t"
 cmd "join" "/tincan:join t as B" "On channel 't' as 'B'"

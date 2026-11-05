@@ -21,7 +21,10 @@ const by = (kind: 'composer' | 'bridge' | 'sdk' | 'unclassified') => (command: s
 })
 const typed = by('composer')
 
-function engine(on: On, env: Record<string, string> = {}, entered = ENTERED) {
+// Sessions here hold this secret, as a headless test run may (TINCAN_ALLOW_HEADLESS=1): sample data.
+const SIGNED = { TINCAN_ALLOW_HEADLESS: '1', TINCAN_TEST_SECRET: 'tc1-abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst' }
+
+function engine(on: On, env: Record<string, string> = SIGNED, entered = ENTERED) {
   const runs: string[][] = []
   // The session's state, by 'plugin/key': it outlives a reload of the plugin.
   const state = new Map<string, unknown>()
@@ -68,7 +71,7 @@ test('commands run for a person at the prompt or over Remote Control', async ($,
 })
 
 test('a headless run or an unattested caller gets no command', async ($, on) => {
-  const t = engine(on)
+  const t = engine(on, {})
   for (const kind of ['sdk', 'unclassified'] as const) {
     const r = await $.command.run(by(kind)('tincan:send', 'ch hi'))
     expect(r.text).toContain('Only a person')
@@ -163,7 +166,7 @@ test("a shell fetch and another server's tool taint the session; TinCan's own to
 test("the guard covers the folder of every channel this session is on, and TINCAN_DIR", async ($, on) => {
   engine(
     on,
-    { TINCAN_DIR: '/opt/team-lines' },
+    { ...SIGNED, TINCAN_DIR: '/opt/team-lines' },
     "TinCan: on channel 'ch' as 'A' (/srv/chan/ch/messages.md)\n--- history ---\n--- end of history (line 20) ---\n",
   )
   await $.command.run(typed('tincan:join', 'ch as A'))

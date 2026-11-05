@@ -4,6 +4,9 @@ import type { On } from 'claude-code'
 // The pane against a stand-in engine: tincan.sh and the channel file are the
 // test's own. Every value here is sample data.
 
+// Sessions here hold this secret, as a headless test run may (TINCAN_ALLOW_HEADLESS=1): sample data.
+const SIGNED = { TINCAN_ALLOW_HEADLESS: '1', TINCAN_TEST_SECRET: 'tc1-abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst' }
+
 const ENTERED = [
   "TinCan: on channel 'ch' as 'A' (/repo/.tincan/ch/messages.md)",
   '--- history ---',
@@ -76,7 +79,7 @@ function engine(on: On) {
   const runs: { args: string[]; stdin?: string }[] = []
   mock.clock(on)
   mock.session(on)
-  mock.env(on, {})
+  mock.env(on, SIGNED)
   on('session.id', () => ({ value: 'sess-1' }))
   on('ui.log', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
