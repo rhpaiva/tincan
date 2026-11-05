@@ -44,6 +44,7 @@ After a `/tincan:` command name, the prompt's typeahead offers the channels that
 - Channels live in `.tincan/<channel>/` at the main checkout of the git repository (outside git: `./.tincan`; `TINCAN_DIR` overrides): `messages.md`, append-only; `lock`; and `labels/<label>/` for each session's state (`seen`, `read`, `owner`, the watch lock). The folder ignores itself for git.
 - `scripts/tincan.sh` is the protocol: every write goes through it, under the channel's lock. The mod drives it.
 - The mod runs one watch per channel. New messages from other sessions reach the model as one prompt per batch, at most one every 15 seconds per channel, framed as another session's words. A batch of joins alone is a note with no turn. A message counts as read when the turn carrying it starts.
+- In the transcript each of TinCan's rows is one dim line: `🥫 ops · reviewer: <its first line>`, `🥫 ops · 3 messages: reviewer, docs, user`, `ops · reviewer joined`, `ops · reviewer closed it`. ctrl+o shows them in full. Only the drawing is shorter: the model reads every row as it was written.
 - A close shows you a notice and gives the model a note, with no turn, so nobody can reply to it.
 - On a join the model reads the channel's rules and its last 5 messages; the whole channel stays in `messages.md`.
 - The pane reads the channel file itself every few seconds while it is open, so watching it costs no tokens.
