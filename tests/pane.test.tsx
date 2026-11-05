@@ -103,6 +103,8 @@ function engine(on: On) {
   on('process.run', (_, e) => {
     const args = e.argv.slice(2) as string[]
     runs.push({ args, stdin: e.init?.stdin })
+    if (args[0] === 'body') return { value: { exitCode: 0, stdout: args[1] === 'post' ? (e.init?.stdin ?? '').trimEnd() : `joined · session ${'sess-1'.slice(0, 8)}`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (args[0] === 'where') return { value: { exitCode: 0, stdout: `/repo/.tincan/${args[1]}/messages.md\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     const stdout = args[0] === 'join' ? ENTERED : args[0] === 'who' ? WHO : '## user · 2026-11-03 22:31:00 UTC\n'
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
@@ -165,8 +167,10 @@ test('Enter in the box broadcasts as user on the channel shown', async ($, on) =
   const ui = await $.ui.mount({ ...PANE_PROPS, surface: 'terminal' })
   await ui.input({ key: 'say', text: 'stack is back up' })
   const post = t.runs.find((r) => r.args[0] === 'post')
-  expect(post?.args).toEqual(['post', 'ch', 'user'])
+  expect(post?.args.slice(0, 3)).toEqual(['post', 'ch', 'user'])
   expect(post?.stdin).toBe('stack is back up')
+  // Signed with the user key, naming the session it was sent from.
+  expect(post?.args[(post?.args.indexOf('--sig') ?? 0) + 1]).toMatch(/^sig · prev=[0-9a-f]{16} · by=A · [0-9a-f]{32}$/)
   await ui.unmount()
 })
 

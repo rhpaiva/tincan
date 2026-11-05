@@ -6,6 +6,7 @@ import type { Channel } from './complete'
 import { KEY_PANE, acceptSecret, currentSecret, drawKeyBox, keyClosed, keyCommand, needSecret } from './key'
 import type { Pending } from './key'
 import { CHANNEL_BELOW, MESSAGE, closeNote, compact, frame, joinsNote } from './rows'
+import { channelKeys, signBlock } from './sign'
 
 // TinCan. scripts/tincan.sh is the protocol (the channel files, their
 // locks, labels, close and receipts); this module drives it for the person's
@@ -77,6 +78,61 @@ const envOf = (s: TincanSub) => ({
   CLAUDE_PID: s.proc,
   TINCAN_DIR: s.dir,
 })
+
+const fileOf = (s: { dir: string; channel: string }) => `${s.dir}/${s.channel}/messages.md`
+const LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+
+/** Now, as a block header's time: YYYY-MM-DD HH:MM:SS, UTC. */
+async function nowAt($: $): Promise<string> {
+  return new Date(await $.clock.now()).toISOString().slice(0, 19).replace('T', ' ')
+}
+
+/** One write to a channel: the script's verb and arguments, and what the block it writes is made of. */
+type Write = {
+  verb: 'open' | 'join' | 'reopen' | 'post' | 'close'
+  channel: string
+  /** The label the block is written under; 'user' for the person's broadcast. */
+  label: string
+  args: string[]
+  env: Record<string, string>
+  stdin?: string
+  /** What `tincan.sh body` takes to print the block's body. */
+  body: string[]
+  /** On a 'user' block: the session the person sent it from. */
+  by?: string
+  /** The channel file, which the signature chains onto; none for a channel being opened. */
+  file?: string
+}
+
+/**
+ * A signed write: the script prints the exact body it will write, the mod signs it after the
+ * file's last block, and the script writes it unless the file changed size meanwhile (exit 7),
+ * when the mod reads it again and signs again.
+ */
+async function signedRun($: $, w: Write): Promise<Run> {
+  const secret = currentSecret()
+  if (!secret) return { exitCode: 2, stdout: '', stderr: 'TinCan: this session has no secret yet: /tincan:key' }
+  const keys = await channelKeys(secret, w.channel)
+  const body = await run($, ['body', ...w.body], w.env, w.stdin)
+  if (body.exitCode !== 0) return body
+  for (let tries = 0; tries < 3; tries += 1) {
+    const text = w.file ? await readPlain($, w.file) : ''
+    const at = await nowAt($)
+    const { sig, size } = await signBlock(text, w.channel, keys, w.label, at, body.stdout, w.by)
+    const r = await run($, [w.verb, ...w.args, '--at', at, '--sig', sig, ...(w.file ? ['--size', String(size)] : [])], w.env, w.stdin)
+    if (r.exitCode !== 7) return r
+  }
+  return {
+    exitCode: 7,
+    stdout: '',
+    stderr: `TinCan: channel '${w.channel}' kept changing while this was signed; its file may have been tampered with. Try again.`,
+  }
+}
+
+/** The channel file's path, as the script resolves it for this environment. */
+async function whereIs($: $, channel: string, env: Record<string, string>): Promise<Run> {
+  return run($, ['where', channel], env)
+}
 
 async function save($: $) {
   await $.state.set(SUBS, [...subs.values()])
@@ -506,11 +562,25 @@ async function enter($: $, verb: 'open' | 'join' | 'reopen', args: string): Prom
 
   const sid = await $.session.id()
   const proc = `mod-${sid}`
-  const r = await run(
-    $,
-    [verb, channel, ...(label ? [label] : []), ...(rejoin ? ['--rejoin'] : []), '--last', LAST],
-    { CLAUDE_CODE_SESSION_ID: sid, CLAUDE_PID: proc },
-  )
+  const env = { CLAUDE_CODE_SESSION_ID: sid, CLAUDE_PID: proc }
+  const me = label ?? sid.slice(0, 8)
+  if (me === 'user') return { text: "The label 'user' is reserved for a person's broadcast; pick another." }
+  if (!LABEL.test(me)) return { text: `Labels use letters, digits, '.', '_' and '-' (got '${me}').` }
+  let path: string | undefined
+  if (verb !== 'open') {
+    const w = await whereIs($, channel, env)
+    if (w.exitCode !== 0) return { text: clean(w.stderr || w.stdout) }
+    path = w.stdout.trim()
+  }
+  const r = await signedRun($, {
+    verb,
+    channel,
+    label: me,
+    args: [channel, ...(label ? [label] : []), ...(rejoin ? ['--rejoin'] : []), '--last', LAST],
+    env,
+    body: [verb === 'reopen' ? 'reopen' : 'join'],
+    ...(path ? { file: path } : {}),
+  })
   if (r.exitCode !== 0) return { text: clean(r.stderr || r.stdout) }
 
   const top = /^TinCan: on channel '([^']+)' as '([^']+)' \((.+)\)$/m.exec(r.stdout)
@@ -549,7 +619,16 @@ async function close($: $, args: string): Promise<Answer> {
   if (!channel) return { text: 'Usage: /tincan:close <channel> [note]' }
   const s = subs.get(channel)
   if (!s) return { text: `This session isn't on '${channel}', so it can't close it. Join it first.` }
-  const r = await run($, ['close', channel, s.label], envOf(s), why)
+  const r = await signedRun($, {
+    verb: 'close',
+    channel,
+    label: s.label,
+    args: [channel, s.label],
+    env: envOf(s),
+    stdin: why,
+    body: ['close', s.label],
+    file: fileOf(s),
+  })
   if (r.exitCode !== 0) return { text: clean(r.stderr || r.stdout) }
   return {
     text: `Closed '${channel}'. Every watch on it ends within a few seconds.`,
@@ -563,7 +642,15 @@ async function send($: $, args: string): Promise<Answer> {
   const s = subs.get(channel)
   const env: Record<string, string> = { CLAUDE_CODE_SESSION_ID: '', CLAUDE_PID: '' }
   if (s) env.TINCAN_DIR = s.dir
-  const r = await run($, ['post', channel, 'user'], env, message)
+  let file = s ? fileOf(s) : ''
+  if (!file) {
+    const w = await whereIs($, channel, env)
+    if (w.exitCode !== 0) return { text: clean(w.stderr || w.stdout) }
+    file = w.stdout.trim()
+  }
+  // The session the person sent it from: its label on the channel, else its short id.
+  const by = s?.label ?? (await $.session.id()).slice(0, 8)
+  const r = await signedRun($, { verb: 'post', channel, label: 'user', args: [channel, 'user'], env, stdin: message, body: ['post'], by, file })
   if (r.exitCode !== 0) return { text: clean(r.stderr || r.stdout) }
   sentAsUser.add(r.stdout.trim())
   return { text: `Sent to '${channel}' as user.` }
@@ -654,7 +741,9 @@ export const register: Register = (on) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: KEY_PANE }, ($, e) =>
-    drawKeyBox($, e, (value: string) => void pasted($, value).catch(() => {})),
+    drawKeyBox($, e, (value: string) =>
+      pasted($, value).catch((err) => $.ui.log(`TinCan: the secret box failed: ${String(err)}`, { to: 'debug' })),
+    ),
   )
 
   on('command.run', { command: 'tincan:show' }, async ($, e) =>
@@ -807,7 +896,16 @@ export const register: Register = (on) => {
     if (!currentSecret()) return { deny: 'This session has no TinCan secret yet, so it can sign nothing. Ask your user to run /tincan:key.' }
     const s = subs.get(channel)
     if (!s) return { deny: `This session isn't on channel '${channel}'. Only the user joins channels (/tincan:join).` }
-    const r = await run($, ['post', channel, s.label], envOf(s), message)
+    const r = await signedRun($, {
+      verb: 'post',
+      channel,
+      label: s.label,
+      args: [channel, s.label],
+      env: envOf(s),
+      stdin: message,
+      body: ['post'],
+      file: fileOf(s),
+    })
     if (r.exitCode !== 0) return { deny: clean(r.stderr || r.stdout) }
     pokePane($)
     return { result: `Posted to '${channel}' as '${s.label}' (${clean(r.stdout)}). Check who has read it with mcp__tincan__who.` }

@@ -169,7 +169,7 @@ export async function keyClosed($: $) {
 }
 
 /** The box: a masked field for the secret, or a new secret shown once. */
-export async function drawKeyBox($: $, e: Parameters<EngineInterface['ui']['resolve']>[0], onSubmit: (value: string) => void) {
+export async function drawKeyBox($: $, e: Parameters<EngineInterface['ui']['resolve']>[0], onSubmit: (value: string) => Promise<void>) {
   const { Box, Text, Button } = $.ui.resolve(e)
   const v = await read($, box)
   const local = LOCAL.has(e.surface)

@@ -45,6 +45,9 @@ function engine(on: On, env: Record<string, string> = SIGNED, entered = ENTERED)
   on('fs.stat', () => ({ deny: 'no such file' }))
   on('process.run', (_, e) => {
     runs.push(e.argv.slice(2) as string[])
+    const args = e.argv.slice(2) as string[]
+    if (args[0] === 'body') return { value: { exitCode: 0, stdout: args[1] === 'post' ? (e.init?.stdin ?? '').trimEnd() : `joined · session ${'sess-1'.slice(0, 8)}`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (args[0] === 'where') return { value: { exitCode: 0, stdout: `/repo/.tincan/${args[1]}/messages.md\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     const stdout = e.argv[2] === 'join' ? entered : '## A · 2026-11-03 22:00:05 UTC\n'
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
