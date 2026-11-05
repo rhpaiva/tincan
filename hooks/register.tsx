@@ -651,8 +651,10 @@ function watch($: $, s: TincanSub) {
               // The close the script stopped on, as the file has it: only a genuine one reaches the model.
               const blocks = await checkedFile($, s)
               const c = blocks?.filter((b) => b.label === who && /^closed · /.test(b.body)).at(-1)
-              const fresh = c ? verdict(c, await $.clock.now(), await seenOf($, s.channel)).action !== 'drop' : false
-              if (c && fresh) {
+              // Genuine, in place, new, and in a file that still begins as this watch read it.
+              const intact = !broken && (readTo === undefined || (blocks !== undefined && blockAt(blocks, from)?.hash === readTo))
+              const fresh = c ? c.status === 'ok' && c.line > from && verdict(c, await $.clock.now(), await seenOf($, s.channel)).action !== 'drop' : false
+              if (c && fresh && intact) {
                 await tell($, `TinCan: ${who} closed channel '${s.channel}'. Its last message:\n\n${c.body}`)
                 await note($, closeNote(who, s.channel, shown(c)))
                 $.ui.toast(`TinCan: ${who} closed '${s.channel}'`)
@@ -667,6 +669,9 @@ function watch($: $, s: TincanSub) {
             started = true
             from = Number(/ from line (\d+)$/.exec(line)?.[1] ?? 0)
             reported = from
+            // What the file holds where the watch starts: every later read must still begin so.
+            const atStart = await checkedFile($, s)
+            if (atStart) readTo = blockAt(atStart, from)?.hash
             $.ui.log(line, { to: 'debug' })
           } else if (line.startsWith('TinCan: ') && !started) {
             startup = clean(line)

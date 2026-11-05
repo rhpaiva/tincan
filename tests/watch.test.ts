@@ -438,3 +438,26 @@ test('a file rewritten under the watch stops what it delivers, and the person is
   expect(t.submitted.length).toBe(1)
   expect(t.notices().join('\n')).toContain('was rewritten under')
 })
+
+test('the first batch after a watch starts is checked against the file it started on', async ($, on) => {
+  const t = engine(on)
+  await t.add('B', 'before the join')
+  await joined($, t)
+  t.cut('before the join')
+  await t.add('B', 'after the rewrite')
+  await upTo(t)
+  expect(t.submitted).toEqual([])
+  expect(t.notices().join('\n')).toContain('was rewritten under')
+})
+
+test('a close in a rewritten file reaches no model', async ($, on) => {
+  const t = engine(on)
+  await t.add('B', 'before the join')
+  await joined($, t)
+  t.cut('before the join')
+  await t.add('B', 'closed · B closed this channel.')
+  await t.say("TinCan: B closed channel 'ch'; this watch has ended. Don't reply.")
+  await t.end(0)
+  expect(t.notes().some((n) => n.includes('closed'))).toBe(false)
+  expect(t.notices().join('\n')).toContain("couldn't verify")
+})
