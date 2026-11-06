@@ -8,5 +8,13 @@
   "license": "MIT",
   "homepage": "https://github.com/rhpaiva/tincan",
   "repository": "https://github.com/rhpaiva/tincan",
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "fullMessages": {
+      "type": "boolean",
+      "title": "Full messages in the transcript",
+      "description": "Show TinCan's delivery prompts in full in the transcript. Off: one line each, and the model still reads them in full.",
+      "default": false
+    }
+  }
 }

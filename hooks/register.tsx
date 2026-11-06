@@ -5,9 +5,9 @@ import { parseList, suggestionsFor, wantsChannels } from './complete'
 import type { Channel } from './complete'
 import { KEY_PANE, acceptSecret, currentSecret, drawKeyBox, keyClosed, keyCommand, needSecret } from './key'
 import type { Pending } from './key'
-import { dropNotice, gapWarning, onlyJoins as joinsOnly, seenIn, shown, sortArrivals } from './channel'
+import { dropNotice, gapWarning, onlyJoins as joinsOnly, seenIn, shown, sortArrivals, summary } from './channel'
 import type { Seen } from './channel'
-import { closeNote, compact, frame, historyOf, joinsNote } from './rows'
+import { closeNote, frame, historyOf, joinsNote } from './rows'
 import { ZERO, blockAt, channelKeys, hashOf, receiptMac, signBlock, verdict, verify } from './sign'
 import type { Checked } from './sign'
 
@@ -188,6 +188,11 @@ async function verifiedRead($: $, s: TincanSub, label: string, blocks: Checked[]
   const keys = await channelKeys(secret, s.channel)
   return m[3] === (await receiptMac(keys, s.channel, label, line, m[2] ?? '', blockAt(blocks, line)?.hash ?? ZERO)) ? line : 0
 }
+
+// The person's choice (the plugin's fullMessages option): a delivery's full prompt in the
+// transcript, or, by default, one line there, with the full prompt handed to the model as a meta
+// row (one the model reads and the transcript doesn't draw) just before it.
+let fullMessages = false
 
 /** Per channel, how its watch catches up on what waited for the secret. */
 const catchUps = new Map<string, () => void>()
@@ -529,6 +534,7 @@ function watch($: $, s: TincanSub) {
   // Batches wait while a delivery is queued, or until the channel's last turn is
   // GAP old, then go together as one turn.
   let pending: string[] = []
+  let pendingBlocks: Checked[] = []
   let warnings: string[] = []
   let upTo = 0
   let inFlight = false
@@ -549,11 +555,19 @@ function watch($: $, s: TincanSub) {
     lastTurn = await $.clock.now()
     const text = pending.join('\n\n')
     const warned = warnings
+    const blocks = pendingBlocks
     const line = upTo
     pending = []
+    pendingBlocks = []
     warnings = []
     try {
-      await $.prompt.submit({ text: frame(s, text, warned) }) // resolves as the turn starts
+      const full = frame(s, text, warned)
+      if (fullMessages) {
+        await $.prompt.submit({ text: full }) // resolves as the turn starts
+      } else {
+        await note($, full)
+        await $.prompt.submit({ text: summary(s.channel, blocks) })
+      }
       await readReceipt($, s, line)
     } finally {
       inFlight = false
@@ -605,6 +619,7 @@ function watch($: $, s: TincanSub) {
       await note($, joinsNote(s.channel, text))
     } else if (got.deliver.length > 0) {
       pending.push(text)
+      pendingBlocks.push(...got.deliver)
       warnings.push(...got.warn.map(gapWarning))
       upTo = from
       kick()
@@ -838,7 +853,8 @@ async function leave($: $, args: string): Promise<Answer> {
   }
 }
 
-export const register: Register = (on) => {
+export const register: Register = (on, options) => {
+  fullMessages = options.fullMessages === true
   on('session.start', async ($, e, next) => {
     // After a reload the outside content the session read is still in the conversation.
     tainted ??= (await $.state.get(TAINTED).catch(() => undefined))?.value || undefined
@@ -993,23 +1009,6 @@ export const register: Register = (on) => {
       </Box>
     )
   })
-
-  // TinCan's own rows are one dim line, always: the engine marks a short row under its speaker
-  // label expanded just as it does in ctrl+o, and no prop tells the two apart. The pane shows the
-  // messages in full. Only the drawing changes: the model reads every row as it was written.
-  on('ui.render', { component: 'UserMessage', props: { origin: { kind: 'plugin' } } }, ($, e, next) => {
-    const { origin, text } = e.props
-    const ours = origin.kind === 'plugin' && (origin.name === $.plugin.name || origin.name.startsWith(`${$.plugin.name}@`))
-    if (!ours) return next(e)
-    const line = compact(text)
-    if (line === undefined) return next(e)
-    const { Text } = $.ui.resolve(e)
-    return (
-      <Text dimColor wrap="truncate-end">
-        {line}
-      </Text>
-    )
-  }).catch(($, e, next) => next(e))
 
   on('prompt.autocomplete', async ($, e, next) => {
     const before = e.text.slice(0, e.cursor)

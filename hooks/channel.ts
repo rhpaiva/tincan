@@ -57,6 +57,16 @@ export function seenIn(blocks: Checked[], seen: Seen): Seen {
   return seen
 }
 
+/**
+ * The one line the transcript shows for a delivery while TinCan keeps its prompts short: who
+ * wrote, never what. Labels are names the script allows, so nothing of a message's text is in it.
+ */
+export function summary(channel: string, delivered: Checked[]): string {
+  const senders = [...new Set(delivered.map((b) => (b.label === 'user' ? `📣 user (from ${b.by ?? '?'})` : b.label)))]
+  const n = delivered.length
+  return `🥫 TinCan · ${channel}: ${n} new message${n === 1 ? '' : 's'} from ${senders.join(', ')} · /tincan:show to read`
+}
+
 /** True for a batch of joins and reopens alone: news that needs no answer. */
 export const onlyJoins = (bs: Checked[]) => bs.length > 0 && bs.every((b) => /^(joined|reopened) · session \S+$/.test(b.body))
 
