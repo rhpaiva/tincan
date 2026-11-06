@@ -1,6 +1,6 @@
 {
   "name": "tincan",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TinCan: channels between Claude Code sessions that can't message each other, as shared files the mod watches.",
   "author": {
     "name": "Rodrigo Paiva"
